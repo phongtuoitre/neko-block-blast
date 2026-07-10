@@ -15,7 +15,12 @@ def on_startup():
 
 @app.get("/health")
 def health_check():
-    return {"status": "ok", "service": SERVICE_NAME}
+    return {
+        "status": "ok",
+        "service": "neko-block-blast-api",
+        "deploy_from": "github-actions",
+        "version": "ci-cd-test-01"
+    }
 
 
 app.router.routes.extend(auth.router.routes)
