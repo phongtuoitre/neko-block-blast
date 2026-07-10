@@ -21,6 +21,10 @@ __pycache__/
 server/.env
 *.env
 
+*.PublishSettings
+*.publishsettings
+*.pubxml
+
 # Local database
 server/data/
 server/data/*.db

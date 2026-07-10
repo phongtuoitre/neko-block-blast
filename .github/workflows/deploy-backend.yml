@@ -1,0 +1,67 @@
+name: Deploy Backend to Azure App Service
+
+on:
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+
+jobs:
+  deploy-backend:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Python 3.12
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install backend dependencies
+        run: |
+          python -m pip install --upgrade pip
+          if [ -f server/requirements.txt ]; then
+            python -m pip install -r server/requirements.txt
+          else
+            python -m pip install -r requirements.txt
+          fi
+
+      - name: Compile backend
+        run: python -m compileall server
+
+      - name: Run tests when present
+        run: |
+          if [ -d tests ] || find . -maxdepth 3 -name "test_*.py" -o -name "*_test.py" | grep -q .; then
+            python -m pytest
+          else
+            echo "No pytest tests found; skipping."
+          fi
+
+      - name: Build clean deploy package
+        run: |
+          rm -rf deploy-package
+          mkdir -p deploy-package
+
+          rsync -a server/ deploy-package/server/ \
+            --exclude "__pycache__/" \
+            --exclude "*.pyc" \
+            --exclude ".env" \
+            --exclude "data/*.db"
+
+          if [ -f server/requirements.txt ]; then
+            cp server/requirements.txt deploy-package/requirements.txt
+          else
+            cp requirements.txt deploy-package/requirements.txt
+          fi
+
+          find deploy-package -type d -name "__pycache__" -prune -exec rm -rf {} +
+          find deploy-package -type f -name "*.pyc" -delete
+
+      - name: Deploy to Azure App Service
+        uses: azure/webapps-deploy@v3
+        with:
+          app-name: neko-block-api-nhom2
+          publish-profile: ${{ secrets.AZURE_WEBAPP_PUBLISH_PROFILE }}
+          package: deploy-package
