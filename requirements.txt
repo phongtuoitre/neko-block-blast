@@ -1,0 +1,13 @@
+pygame==2.6.1
+fastapi
+uvicorn[standard]
+sqlmodel
+PyJWT
+pwdlib[argon2]
+python-multipart
+email-validator
+pytest
+httpx
+psycopg[binary]
+gunicorn
+python-dotenv

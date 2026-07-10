@@ -1,0 +1,44 @@
+# Python virtual environments
+.venv/
+.venv_new/
+venv/
+env/
+
+# Python cache
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.pytest_cache/
+.mypy_cache/
+
+# IDE/editor
+.idea/
+.vscode/
+
+# Environment / secrets
+.env
+server/.env
+*.env
+
+# Local database
+server/data/
+server/data/*.db
+*.db
+*.sqlite
+*.sqlite3
+
+# Build / package output
+build/
+dist/
+*.spec
+NekoBlockBlastDemo.zip
+neko-backend-deploy-clean.zip
+*.zip
+
+# Git / OS
+.DS_Store
+Thumbs.db
+
+# Logs
+*.log
