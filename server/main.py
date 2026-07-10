@@ -18,8 +18,14 @@ def health_check():
     return {
         "status": "ok",
         "service": "neko-block-blast-api",
+    }
+
+
+@app.get("/version")
+def version_check():
+    return {
         "deploy_from": "github-actions",
-        "version": "ci-cd-test-01"
+        "version": "ci-cd-test-01",
     }
 
 
