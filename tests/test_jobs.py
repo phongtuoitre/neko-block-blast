@@ -165,3 +165,19 @@ def test_online_leaderboard_returns_aggregated_rows():
     assert winner_row["wins"] >= 1
     assert winner_row["matches"] >= 1
     assert winner_row["total_score"] >= 2000
+
+
+def test_ai_system_analysis_returns_source_without_azure_openai_config(monkeypatch):
+    monkeypatch.delenv("AZURE_OPENAI_ENDPOINT", raising=False)
+    monkeypatch.delenv("AZURE_OPENAI_API_KEY", raising=False)
+    monkeypatch.delenv("AZURE_OPENAI_DEPLOYMENT", raising=False)
+    response = client.get("/jobs/ai-system-analysis", headers=job_headers())
+
+    assert response.status_code == 200
+    data = response.json()
+    assert data["ai_enabled"] is False
+    assert data["analysis"] == "Azure OpenAI is not configured."
+    assert data["risk_level"] == "unknown"
+    assert data["recommendations"] == []
+    assert "summary" in data["source"]
+    assert isinstance(data["source"]["leaderboard_count"], int)

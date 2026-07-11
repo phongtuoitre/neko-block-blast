@@ -10,3 +10,4 @@ httpx
 psycopg[binary]
 gunicorn
 python-dotenv
+openai>=1.0.0

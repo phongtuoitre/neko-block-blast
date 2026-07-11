@@ -21,7 +21,7 @@ def _job_key() -> str:
     return os.environ.get("NEKO_JOB_KEY", "").strip()
 
 
-def _json_response(payload: dict, status_code: int = 200) -> func.HttpResponse:
+def _json_response(payload, status_code: int = 200) -> func.HttpResponse:
     return func.HttpResponse(
         json.dumps(payload, ensure_ascii=False),
         status_code=status_code,
@@ -150,7 +150,7 @@ def _check_backend_health() -> dict:
 
 def _proxy_backend_job(path: str, method: str = "GET") -> func.HttpResponse:
     result = _call_backend(path, method=method, include_job_key=True)
-    if result["ok"] and isinstance(result["data"], dict):
+    if result["ok"] and result["data"] is not None:
         return _json_response(result["data"], status_code=result["status_code"] or 200)
 
     payload = {
@@ -195,6 +195,11 @@ def jobs_cleanup_expired_rooms(req: func.HttpRequest) -> func.HttpResponse:
 )
 def jobs_leaderboard_online(req: func.HttpRequest) -> func.HttpResponse:
     return _proxy_backend_job("/jobs/leaderboard-online")
+
+
+@app.route(route="ai/analyze-system", methods=["GET"], auth_level=func.AuthLevel.ANONYMOUS)
+def ai_analyze_system(req: func.HttpRequest) -> func.HttpResponse:
+    return _proxy_backend_job("/jobs/ai-system-analysis")
 
 
 def _dashboard_html() -> str:
@@ -586,6 +591,7 @@ def _dashboard_html() -> str:
 
     <section class="actions" aria-label="Dashboard actions">
       <button id="refreshBtn" type="button">Refresh Dashboard</button>
+      <button id="analyzeBtn" type="button">Analyze with Azure OpenAI</button>
       <button id="cleanupBtn" type="button">Run Cleanup Expired Rooms</button>
       <button id="leaderboardBtn" class="secondary" type="button">Reload Leaderboard</button>
     </section>
@@ -667,6 +673,7 @@ def _dashboard_html() -> str:
       finishedMatches: document.getElementById("statFinishedMatches"),
       leaderboardBody: document.getElementById("leaderboardBody"),
       refreshBtn: document.getElementById("refreshBtn"),
+      analyzeBtn: document.getElementById("analyzeBtn"),
       cleanupBtn: document.getElementById("cleanupBtn"),
       leaderboardBtn: document.getElementById("leaderboardBtn"),
       toast: document.getElementById("toast")
@@ -803,12 +810,40 @@ def _dashboard_html() -> str:
       }
     }
 
+    async function runAnalysis() {
+      els.analyzeBtn.disabled = true;
+      try {
+        const response = await fetch('/api/ai/analyze-system', { cache: "no-store" });
+        const text = await response.text();
+        let data = {};
+        if (text) {
+          try {
+            data = JSON.parse(text);
+          } catch (error) {
+            data = { message: text };
+          }
+        }
+        if (!response.ok) {
+          throw new Error(data.message || data.detail || `Request failed with HTTP ${response.status}`);
+        }
+        const message = data.summary || data.message || data.analysis || "Azure OpenAI analysis completed";
+        showToast(typeof message === "string" ? message : "Azure OpenAI analysis completed");
+      } catch (error) {
+        console.error("Azure OpenAI analysis failed", error);
+        showToast(error.message || "Azure OpenAI analysis request failed", true);
+      } finally {
+        els.analyzeBtn.disabled = false;
+        updateLastUpdated();
+      }
+    }
+
     function setBusy(isBusy) {
       els.refreshBtn.disabled = isBusy;
       els.leaderboardBtn.disabled = isBusy;
     }
 
     els.refreshBtn.addEventListener("click", refreshDashboard);
+    els.analyzeBtn.addEventListener("click", runAnalysis);
     els.cleanupBtn.addEventListener("click", runCleanup);
     els.leaderboardBtn.addEventListener("click", async () => {
       try {

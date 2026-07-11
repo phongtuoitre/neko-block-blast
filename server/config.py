@@ -32,6 +32,18 @@ def get_admin_job_key():
     return "test-job-key"
 
 
+def get_azure_openai_settings():
+    return {
+        "endpoint": (os.getenv("AZURE_OPENAI_ENDPOINT") or "").strip(),
+        "api_key": (os.getenv("AZURE_OPENAI_API_KEY") or "").strip(),
+        "deployment": (os.getenv("AZURE_OPENAI_DEPLOYMENT") or "").strip(),
+        "api_version": (
+            os.getenv("AZURE_OPENAI_API_VERSION") or "2024-10-21"
+        ).strip()
+        or "2024-10-21",
+    }
+
+
 def get_smtp_settings():
     required = {
         "host": os.getenv("SMTP_HOST"),
