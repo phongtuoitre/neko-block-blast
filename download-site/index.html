@@ -1,0 +1,540 @@
+﻿<!DOCTYPE html>
+<html lang="vi">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Neko Block Blast - Download</title>
+  <style>
+    * {
+      box-sizing: border-box;
+      scroll-behavior: smooth;
+    }
+
+    body {
+      margin: 0;
+      font-family: Arial, sans-serif;
+      background:
+        radial-gradient(circle at 10% 20%, rgba(255, 143, 171, 0.18), transparent 28%),
+        radial-gradient(circle at 85% 15%, rgba(255, 210, 120, 0.20), transparent 30%),
+        linear-gradient(135deg, #fff8ef, #ffeaf2);
+      color: #5b4037;
+    }
+
+    .page {
+      max-width: 1180px;
+      margin: 0 auto;
+      padding: 22px;
+    }
+
+    .navbar {
+      position: sticky;
+      top: 16px;
+      z-index: 10;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 20px;
+      padding: 14px 28px;
+      background: rgba(255, 250, 242, 0.92);
+      border: 2px solid #ffd4df;
+      border-radius: 24px;
+      box-shadow: 0 12px 28px rgba(125, 79, 62, 0.12);
+      backdrop-filter: blur(10px);
+    }
+
+    .brand {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      font-weight: 900;
+      font-size: 22px;
+      color: #5b4037;
+      letter-spacing: 1px;
+    }
+
+    .logo-cat {
+      width: 48px;
+      height: 48px;
+      display: grid;
+      place-items: center;
+      border-radius: 16px;
+      background: #fff1d9;
+      border: 2px solid #ffb6c9;
+      font-size: 30px;
+      box-shadow: inset 0 -5px 0 rgba(255, 143, 171, 0.18);
+    }
+
+    .nav-links {
+      display: flex;
+      gap: 22px;
+      font-size: 16px;
+      font-weight: 700;
+    }
+
+    .nav-links a {
+      color: #6a4a40;
+      text-decoration: none;
+    }
+
+    .nav-links a:hover {
+      color: #ff5f93;
+    }
+
+    .hero {
+      display: grid;
+      grid-template-columns: 1.05fr 0.95fr;
+      gap: 34px;
+      align-items: center;
+      padding: 70px 20px 44px;
+    }
+
+    .eyebrow {
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      padding: 9px 16px;
+      border-radius: 999px;
+      background: white;
+      border: 2px solid #ffc6d5;
+      color: #ff5f93;
+      font-weight: 800;
+      box-shadow: 0 8px 18px rgba(255, 95, 147, 0.12);
+    }
+
+    h1 {
+      margin: 20px 0 12px;
+      font-size: clamp(48px, 8vw, 92px);
+      line-height: 0.94;
+      color: #5a382d;
+      text-shadow: 0 6px 0 rgba(255, 197, 211, 0.65);
+      letter-spacing: 1px;
+    }
+
+    .subtitle {
+      font-size: 21px;
+      font-weight: 700;
+      color: #7a5a50;
+      margin-bottom: 28px;
+      line-height: 1.5;
+    }
+
+    .actions {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 18px;
+      align-items: center;
+    }
+
+    .btn {
+      border: none;
+      cursor: pointer;
+      text-decoration: none;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      gap: 12px;
+      padding: 18px 30px;
+      border-radius: 18px;
+      font-size: 21px;
+      font-weight: 900;
+      transition: 0.15s ease;
+    }
+
+    .btn-main {
+      color: white;
+      background: linear-gradient(180deg, #ff7ca8, #ff4f86);
+      box-shadow: 0 8px 0 #d83d70, 0 14px 28px rgba(255, 79, 134, 0.25);
+    }
+
+    .btn-main:hover {
+      transform: translateY(3px);
+      box-shadow: 0 5px 0 #d83d70, 0 10px 20px rgba(255, 79, 134, 0.22);
+    }
+
+    .btn-sub {
+      color: #7a4d42;
+      background: rgba(255, 255, 255, 0.72);
+      border: 2px solid #ffb8c9;
+      box-shadow: 0 10px 24px rgba(122, 77, 66, 0.10);
+    }
+
+    .note {
+      margin-top: 22px;
+      color: #7c5b52;
+      font-weight: 700;
+    }
+
+    .hero-art {
+      position: relative;
+      min-height: 410px;
+      display: grid;
+      place-items: center;
+    }
+
+    .big-cat {
+      width: 320px;
+      height: 320px;
+      border-radius: 48% 48% 42% 42%;
+      background: #ffe4bd;
+      border: 5px solid #ffb3c8;
+      position: relative;
+      box-shadow: 0 18px 0 rgba(255, 183, 201, 0.30), 0 22px 45px rgba(91, 64, 55, 0.18);
+    }
+
+    .big-cat::before,
+    .big-cat::after {
+      content: "";
+      position: absolute;
+      top: -38px;
+      width: 92px;
+      height: 92px;
+      background: #ffe4bd;
+      border: 5px solid #ffb3c8;
+      transform: rotate(45deg);
+      border-radius: 18px;
+    }
+
+    .big-cat::before { left: 38px; }
+    .big-cat::after { right: 38px; }
+
+    .face {
+      position: absolute;
+      top: 100px;
+      left: 0;
+      right: 0;
+      text-align: center;
+      font-size: 78px;
+      z-index: 2;
+    }
+
+    .blocks {
+      position: absolute;
+      bottom: 18px;
+      left: 30px;
+      right: 0;
+      display: flex;
+      gap: 8px;
+      justify-content: center;
+      align-items: end;
+      z-index: 3;
+    }
+
+    .block-stack {
+      display: grid;
+      grid-template-columns: repeat(2, 42px);
+      gap: 6px;
+    }
+
+    .cube {
+      width: 42px;
+      height: 42px;
+      border-radius: 10px;
+      border: 3px solid rgba(91, 64, 55, 0.16);
+      box-shadow: inset 0 5px 0 rgba(255,255,255,0.40);
+    }
+
+    .pink { background: #ff91b6; }
+    .yellow { background: #ffc65c; }
+    .blue { background: #7fd3ff; }
+    .purple { background: #c6a0ff; }
+    .green { background: #a7df80; }
+
+    .cards {
+      display: grid;
+      grid-template-columns: repeat(3, 1fr);
+      gap: 22px;
+      margin-top: 10px;
+    }
+
+    .card {
+      background: rgba(255, 255, 255, 0.72);
+      border: 2px solid #ffb8c9;
+      border-radius: 26px;
+      padding: 26px;
+      box-shadow: 0 12px 25px rgba(122, 77, 66, 0.10);
+      display: flex;
+      gap: 18px;
+      align-items: center;
+    }
+
+    .icon {
+      width: 78px;
+      height: 78px;
+      flex: 0 0 78px;
+      display: grid;
+      place-items: center;
+      border-radius: 50%;
+      background: #fff3e4;
+      border: 2px solid #ffc1d0;
+      font-size: 38px;
+    }
+
+    .card h3 {
+      margin: 0 0 8px;
+      font-size: 23px;
+      color: #5a382d;
+    }
+
+    .card p {
+      margin: 0;
+      line-height: 1.55;
+      color: #7c5b52;
+      font-weight: 600;
+    }
+
+    .section {
+      margin-top: 28px;
+      display: grid;
+      grid-template-columns: 1.4fr 0.8fr;
+      gap: 24px;
+    }
+
+    .panel {
+      background: rgba(255, 255, 255, 0.70);
+      border: 2px solid #ffb8c9;
+      border-radius: 26px;
+      padding: 24px;
+      box-shadow: 0 12px 25px rgba(122, 77, 66, 0.10);
+    }
+
+    .panel-title {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      margin: 0 0 18px;
+      color: #5a382d;
+      font-size: 22px;
+      font-weight: 900;
+    }
+
+    .shots {
+      display: grid;
+      grid-template-columns: repeat(3, 1fr);
+      gap: 14px;
+    }
+
+    .shot {
+      min-height: 160px;
+      border-radius: 18px;
+      border: 2px solid #ffc1d0;
+      background: #fff9f0;
+      display: grid;
+      place-items: center;
+      text-align: center;
+      font-weight: 900;
+      color: #704b41;
+      padding: 14px;
+      position: relative;
+      overflow: hidden;
+    }
+
+    .shot::before {
+      content: "";
+      position: absolute;
+      inset: 0;
+      background-image:
+        radial-gradient(circle, rgba(255, 143, 171, 0.28) 2px, transparent 3px);
+      background-size: 28px 28px;
+      opacity: 0.5;
+    }
+
+    .board {
+      width: 120px;
+      height: 120px;
+      display: grid;
+      grid-template-columns: repeat(5, 1fr);
+      gap: 4px;
+      z-index: 1;
+    }
+
+    .mini {
+      border-radius: 5px;
+      border: 1px solid rgba(91,64,55,.15);
+    }
+
+    .shot span {
+      z-index: 1;
+    }
+
+    .info-list {
+      display: grid;
+      gap: 16px;
+    }
+
+    .info-item {
+      display: flex;
+      align-items: center;
+      gap: 14px;
+      padding-bottom: 14px;
+      border-bottom: 1px dashed #f4a9bd;
+      font-weight: 800;
+      color: #704b41;
+    }
+
+    .info-item:last-child {
+      border-bottom: none;
+      padding-bottom: 0;
+    }
+
+    .info-icon {
+      font-size: 28px;
+      width: 42px;
+      text-align: center;
+    }
+
+    footer {
+      text-align: center;
+      padding: 34px 0 14px;
+      color: #7a5a50;
+      font-weight: 800;
+    }
+
+    @media (max-width: 900px) {
+      .navbar, .nav-links, .actions {
+        flex-direction: column;
+      }
+
+      .hero, .section {
+        grid-template-columns: 1fr;
+      }
+
+      .cards, .shots {
+        grid-template-columns: 1fr;
+      }
+
+      .hero-art {
+        min-height: 330px;
+      }
+
+      .big-cat {
+        width: 260px;
+        height: 260px;
+      }
+    }
+  </style>
+</head>
+<body>
+  <div class="page">
+    <nav class="navbar">
+      <div class="brand">
+        <div class="logo-cat">🐱</div>
+        <div>NEKO BLOCK BLAST</div>
+      </div>
+      <div class="nav-links">
+        <a href="#">🏠 Trang chủ</a>
+        <a href="#features">🐾 Tính năng</a>
+        <a href="#gallery">🖼️ Ảnh game</a>
+        <a href="#download">⬇️ Tải xuống</a>
+      </div>
+    </nav>
+
+    <main class="hero">
+      <section>
+        <div class="eyebrow">🐾 Cute Cat Block Puzzle</div>
+        <h1>NEKO<br>BLOCK BLAST</h1>
+        <p class="subtitle">Game xếp khối mèo dễ thương – Chơi đơn & Đấu 1v1 online</p>
+
+        <div class="actions" id="download">
+          <a class="btn btn-main" href="https://nekoblockblastnhom2.blob.core.windows.net/game-demo/NekoBlockBlast.exe?sp=r&st=2026-07-10T16:03:00Z&se=2026-08-25T00:18:00Z&spr=https&sv=2026-02-06&sr=b&sig=NzqO%2BKOqdSjq2j4b1T9x%2FlNltg91PindyMaz%2FadveeA%3D">⬇ TẢI GAME NGAY</a>
+          <a class="btn btn-sub" href="#guide">📖 XEM HƯỚNG DẪN</a>
+        </div>
+
+        <p class="note">💗 Tải file EXE và chạy trực tiếp NekoBlockBlast.exe.</p>
+      </section>
+
+      <section class="hero-art">
+        <div class="big-cat">
+          <div class="face">•ᴗ•</div>
+          <div class="blocks">
+            <div class="block-stack">
+              <div class="cube pink"></div>
+              <div class="cube yellow"></div>
+              <div class="cube blue"></div>
+              <div class="cube purple"></div>
+            </div>
+            <div class="block-stack">
+              <div class="cube green"></div>
+              <div class="cube pink"></div>
+              <div class="cube yellow"></div>
+              <div class="cube blue"></div>
+            </div>
+          </div>
+        </div>
+      </section>
+    </main>
+
+    <section class="cards" id="features">
+      <div class="card">
+        <div class="icon">😺</div>
+        <div>
+          <h3>Chơi đơn</h3>
+          <p>Thư giãn cùng những màn xếp khối thú vị và dễ thương.</p>
+        </div>
+      </div>
+
+      <div class="card">
+        <div class="icon">⚔️</div>
+        <div>
+          <h3>Đấu 1v1 Online</h3>
+          <p>Thách đấu bạn bè hoặc người chơi khác trong các trận 1v1 kịch tính.</p>
+        </div>
+      </div>
+
+      <div class="card">
+        <div class="icon">🏆</div>
+        <div>
+          <h3>Bảng xếp hạng</h3>
+          <p>Leo hạng và khẳng định kỹ năng trên bảng xếp hạng toàn cầu.</p>
+        </div>
+      </div>
+    </section>
+
+    <section class="section">
+      <div class="panel" id="gallery">
+        <div class="panel-title">📷 ẢNH GAME</div>
+        <div class="shots">
+          <div class="shot"><span>NEKO BLOCK BLAST<br><br>CHƠI ĐƠN<br>ĐẤU 1V1 ONLINE<br>BẢNG XẾP HẠNG</span></div>
+          <div class="shot">
+            <div class="board">
+              <div class="mini pink"></div><div></div><div class="mini yellow"></div><div></div><div class="mini purple"></div>
+              <div class="mini pink"></div><div class="mini blue"></div><div class="mini yellow"></div><div></div><div class="mini purple"></div>
+              <div></div><div class="mini blue"></div><div class="mini green"></div><div class="mini green"></div><div></div>
+              <div class="mini yellow"></div><div class="mini yellow"></div><div></div><div class="mini pink"></div><div class="mini pink"></div>
+              <div></div><div class="mini purple"></div><div class="mini purple"></div><div class="mini blue"></div><div></div>
+            </div>
+          </div>
+          <div class="shot"><span>🏆 BẢNG XẾP HẠNG<br><br>1. NekoMaster<br>2. CatLover<br>3. BlockKing<br>4. MeowMeow</span></div>
+        </div>
+      </div>
+
+      <div class="panel">
+        <div class="panel-title">☁️ Phiên bản Demo</div>
+        <div class="info-list">
+          <div class="info-item"><div class="info-icon">🪟</div><div>Nền tảng: Windows</div></div>
+          <div class="info-item"><div class="info-icon">☁️</div><div>Backend: Azure App Service</div></div>
+          <div class="info-item"><div class="info-icon">📦</div><div>Lưu file: Azure Blob Storage</div></div>
+        </div>
+      </div>
+    </section>
+
+    <section class="panel" id="guide" style="margin-top:24px;">
+      <div class="panel-title">📖 Hướng dẫn tải và chơi</div>
+      <p style="font-weight:700; line-height:1.8; color:#704b41;">
+        1. Bấm nút <b>TẢI GAME NGAY</b> để tải file EXE.<br>
+        
+        2. Mở file <b>NekoBlockBlast.exe</b> để chơi game.<br>
+        3. Chọn <b>Chơi đơn</b> hoặc <b>Đấu 1v1 Online</b> để bắt đầu.
+      </p>
+    </section>
+
+    <footer>
+      🐾 Neko Block Blast Demo | Cloud Computing Project 💗
+    </footer>
+  </div>
+</body>
+</html>
+
+
+
+
+

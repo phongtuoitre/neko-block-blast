@@ -2,7 +2,7 @@ from fastapi import FastAPI
 
 from server.config import SERVICE_NAME
 from server.database import init_db
-from server.routers import auth, matches, rooms
+from server.routers import auth, jobs, matches, rooms
 
 
 app = FastAPI(title="Neko Block Blast API")
@@ -32,3 +32,4 @@ def version_check():
 app.router.routes.extend(auth.router.routes)
 app.router.routes.extend(rooms.router.routes)
 app.router.routes.extend(matches.router.routes)
+app.router.routes.extend(jobs.router.routes)

@@ -23,6 +23,15 @@ def get_secret_key():
     return os.getenv("SECRET_KEY")
 
 
+def get_admin_job_key():
+    key = os.getenv("ADMIN_JOB_KEY")
+    if key:
+        return key
+    if os.getenv("WEBSITE_SITE_NAME") or os.getenv("WEBSITE_INSTANCE_ID"):
+        return None
+    return "test-job-key"
+
+
 def get_smtp_settings():
     required = {
         "host": os.getenv("SMTP_HOST"),

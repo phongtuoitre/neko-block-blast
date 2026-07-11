@@ -1,0 +1,14 @@
+.git*
+.vscode
+.venv
+.venv_new
+__pycache__/
+*.pyc
+local.settings.json
+server/.env
+server/data/*.db
+build/
+dist/
+NekoBlockBlastDemo.zip
+neko-backend-deploy-clean.zip
+*.PublishSettings
