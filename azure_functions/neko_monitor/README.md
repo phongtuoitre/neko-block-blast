@@ -27,6 +27,12 @@ Health check thu cong:
 GET /api/monitor/health-check
 ```
 
+Cloud Operations Dashboard:
+
+```text
+GET /api/demo/dashboard
+```
+
 Serverless job proxy:
 
 ```text
@@ -42,6 +48,25 @@ X-Job-Key: <NEKO_JOB_KEY>
 ```
 
 Backend chi chap nhan neu header nay khop `ADMIN_JOB_KEY`.
+
+## Cloud Operations Dashboard
+
+Mo dashboard sau khi deploy:
+
+```text
+https://<function-app-name>.azurewebsites.net/api/demo/dashboard
+```
+
+Dashboard la mot trang HTML self-contained duoc tra ve boi Azure Functions. Trang nay dung inline CSS va JavaScript thuan, khong dung CDN va khong chua secret. JavaScript chi goi cac endpoint cung domain:
+
+```text
+GET  /api/monitor/health-check
+GET  /api/jobs/summary
+GET  /api/jobs/leaderboard-online
+POST /api/jobs/cleanup-expired-rooms
+```
+
+Dashboard dung de demo Azure Functions nhu mot lop Cloud Operations cho game: xem backend online/offline, latency, thong ke users/rooms/matches, online leaderboard va chay cleanup expired rooms thu cong.
 
 ## Timer functions
 
