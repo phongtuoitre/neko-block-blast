@@ -124,15 +124,58 @@ def build_ai_source(summary: dict[str, int], leaderboard: list[dict[str, Any]]):
     }
 
 
+def build_ai_debug(settings: dict[str, str]) -> dict[str, str]:
+    return {
+        "openai_endpoint_type": settings["openai_endpoint_type"],
+        "deployment": settings["deployment"],
+    }
+
+
 def azure_openai_is_configured(settings: dict[str, str]) -> bool:
-    return all(
-        [
-            settings["endpoint"],
-            settings["api_key"],
-            settings["deployment"],
-            settings["api_version"],
-        ]
+    required_settings = [
+        settings["endpoint"],
+        settings["api_key"],
+        settings["deployment"],
+    ]
+    if settings["openai_endpoint_type"] == "azure_openai":
+        required_settings.append(settings["api_version"])
+    return all(required_settings)
+
+
+def create_openai_chat_completion(settings: dict[str, str], messages: list[dict[str, str]]):
+    request_options = {
+        "model": settings["deployment"],
+        "messages": messages,
+        "response_format": {"type": "json_object"},
+        "temperature": 0.2,
+        "max_tokens": 700,
+    }
+
+    if settings["openai_endpoint_type"] == "foundry_project":
+        from openai import OpenAI
+
+        client = OpenAI(
+            api_key=settings["api_key"],
+            base_url=settings["foundry_base_url"],
+        )
+        return client.chat.completions.create(**request_options)
+
+    from openai import AzureOpenAI
+
+    client = AzureOpenAI(
+        api_key=settings["api_key"],
+        azure_endpoint=settings["endpoint"],
+        api_version=settings["api_version"],
     )
+    return client.chat.completions.create(**request_options)
+
+
+def format_openai_error(exc: Exception, settings: dict[str, str]) -> str:
+    message = str(exc)
+    api_key = settings.get("api_key")
+    if api_key:
+        message = message.replace(api_key, "[redacted]")
+    return f"Azure OpenAI request failed: {message}"
 
 
 def build_ai_prompt(summary: dict[str, int], leaderboard: list[dict[str, Any]]) -> str:
@@ -186,6 +229,7 @@ def read_ai_system_analysis(session: Session = Depends(get_session)):
     leaderboard = build_online_leaderboard(session)
     source = build_ai_source(summary, leaderboard)
     settings = get_azure_openai_settings()
+    debug = build_ai_debug(settings)
 
     if not azure_openai_is_configured(settings):
         return {
@@ -194,19 +238,13 @@ def read_ai_system_analysis(session: Session = Depends(get_session)):
             "risk_level": "unknown",
             "recommendations": [],
             "source": source,
+            **debug,
         }
 
     try:
-        from openai import AzureOpenAI
-
-        client = AzureOpenAI(
-            api_key=settings["api_key"],
-            azure_endpoint=settings["endpoint"],
-            api_version=settings["api_version"],
-        )
-        completion = client.chat.completions.create(
-            model=settings["deployment"],
-            messages=[
+        completion = create_openai_chat_completion(
+            settings,
+            [
                 {
                     "role": "system",
                     "content": (
@@ -219,9 +257,6 @@ def read_ai_system_analysis(session: Session = Depends(get_session)):
                     "content": build_ai_prompt(summary, leaderboard),
                 },
             ],
-            response_format={"type": "json_object"},
-            temperature=0.2,
-            max_tokens=700,
         )
         content = completion.choices[0].message.content or ""
         parsed = parse_ai_analysis(content)
@@ -231,12 +266,14 @@ def read_ai_system_analysis(session: Session = Depends(get_session)):
             "risk_level": parsed["risk_level"],
             "recommendations": parsed["recommendations"],
             "source": source,
+            **debug,
         }
     except Exception as exc:
         return {
             "ai_enabled": False,
-            "analysis": f"Azure OpenAI request failed: {exc}",
+            "analysis": format_openai_error(exc, settings),
             "risk_level": "unknown",
             "recommendations": [],
             "source": source,
+            **debug,
         }

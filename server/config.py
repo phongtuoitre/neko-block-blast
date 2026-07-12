@@ -32,15 +32,39 @@ def get_admin_job_key():
     return "test-job-key"
 
 
+def get_openai_endpoint_type(endpoint: str) -> str:
+    normalized_endpoint = (endpoint or "").lower()
+    if "services.ai.azure.com" in normalized_endpoint:
+        return "foundry_project"
+    return "azure_openai"
+
+
+def get_foundry_openai_base_url(endpoint: str) -> str:
+    normalized_endpoint = (endpoint or "").strip().rstrip("/")
+    if not normalized_endpoint:
+        return ""
+    if normalized_endpoint.lower().endswith("/openai/v1"):
+        return normalized_endpoint
+    return f"{normalized_endpoint}/openai/v1"
+
+
 def get_azure_openai_settings():
+    endpoint = (os.getenv("AZURE_OPENAI_ENDPOINT") or "").strip()
+    endpoint_type = get_openai_endpoint_type(endpoint)
     return {
-        "endpoint": (os.getenv("AZURE_OPENAI_ENDPOINT") or "").strip(),
+        "endpoint": endpoint,
         "api_key": (os.getenv("AZURE_OPENAI_API_KEY") or "").strip(),
         "deployment": (os.getenv("AZURE_OPENAI_DEPLOYMENT") or "").strip(),
         "api_version": (
             os.getenv("AZURE_OPENAI_API_VERSION") or "2024-10-21"
         ).strip()
         or "2024-10-21",
+        "openai_endpoint_type": endpoint_type,
+        "foundry_base_url": (
+            get_foundry_openai_base_url(endpoint)
+            if endpoint_type == "foundry_project"
+            else ""
+        ),
     }
 
 
