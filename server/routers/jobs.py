@@ -2,6 +2,7 @@ import json
 from datetime import timedelta
 import hmac
 from typing import Any
+from urllib.parse import urlparse, urlunparse
 
 from fastapi import APIRouter, Depends, Header, HTTPException, status
 from sqlalchemy import case, func as sqlalchemy_func
@@ -142,6 +143,32 @@ def azure_openai_is_configured(settings: dict[str, str]) -> bool:
     return all(required_settings)
 
 
+def endpoint_uses_openai_compatible_client(endpoint: str) -> bool:
+    normalized_endpoint = endpoint.lower().rstrip("/")
+    return (
+        "services.ai.azure.com" in normalized_endpoint
+        or normalized_endpoint.endswith("/openai/v1")
+    )
+
+
+def build_openai_compatible_base_url(endpoint: str) -> str:
+    normalized_endpoint = endpoint.strip().rstrip("/")
+    parsed_endpoint = urlparse(normalized_endpoint)
+    hostname = parsed_endpoint.netloc
+
+    if hostname.endswith(".services.ai.azure.com"):
+        hostname = hostname.removesuffix(".services.ai.azure.com")
+        hostname = f"{hostname}.openai.azure.com"
+        return urlunparse((parsed_endpoint.scheme, hostname, "/openai/v1", "", "", ""))
+
+    if normalized_endpoint.lower().endswith("/openai/v1"):
+        return normalized_endpoint
+
+    return urlunparse(
+        (parsed_endpoint.scheme, parsed_endpoint.netloc, "/openai/v1", "", "", "")
+    )
+
+
 def create_openai_chat_completion(settings: dict[str, str], messages: list[dict[str, str]]):
     request_options = {
         "model": settings["deployment"],
@@ -151,12 +178,12 @@ def create_openai_chat_completion(settings: dict[str, str], messages: list[dict[
         "max_tokens": 700,
     }
 
-    if settings["openai_endpoint_type"] == "foundry_project":
+    if endpoint_uses_openai_compatible_client(settings["endpoint"]):
         from openai import OpenAI
 
         client = OpenAI(
             api_key=settings["api_key"],
-            base_url=settings["foundry_base_url"],
+            base_url=build_openai_compatible_base_url(settings["endpoint"]),
         )
         return client.chat.completions.create(**request_options)
 
