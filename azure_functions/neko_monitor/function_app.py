@@ -11,6 +11,10 @@ import azure.functions as func
 app = func.FunctionApp()
 
 BACKEND_TIMEOUT_SECONDS = 10
+AI_ANALYSIS_TIMEOUT_SECONDS = 90
+AI_ANALYSIS_TIMEOUT_MESSAGE = (
+    "Azure OpenAI analysis is taking longer than expected. Please try again."
+)
 
 
 def _backend_base_url() -> str:
@@ -38,7 +42,13 @@ def _parse_json_response(raw_body: bytes):
         return raw_body.decode("utf-8", errors="replace")
 
 
-def _call_backend(path: str, method: str = "GET", include_job_key: bool = False) -> dict:
+def _call_backend(
+    path: str,
+    method: str = "GET",
+    include_job_key: bool = False,
+    timeout_seconds: int = BACKEND_TIMEOUT_SECONDS,
+    timeout_message: str = "Backend request timed out",
+) -> dict:
     backend_url = _backend_base_url()
     if not backend_url:
         return {
@@ -78,7 +88,7 @@ def _call_backend(path: str, method: str = "GET", include_job_key: bool = False)
     started_at = time.perf_counter()
 
     try:
-        with urllib.request.urlopen(request, timeout=BACKEND_TIMEOUT_SECONDS) as response:
+        with urllib.request.urlopen(request, timeout=timeout_seconds) as response:
             raw_body = response.read(1024 * 1024)
             status_code = response.getcode()
     except urllib.error.HTTPError as exc:
@@ -94,6 +104,16 @@ def _call_backend(path: str, method: str = "GET", include_job_key: bool = False)
         }
     except urllib.error.URLError as exc:
         latency_ms = round((time.perf_counter() - started_at) * 1000)
+        reason = exc.reason
+        if isinstance(reason, TimeoutError) or "timed out" in str(reason).lower():
+            return {
+                "ok": False,
+                "backend_url": backend_url,
+                "status_code": None,
+                "latency_ms": latency_ms,
+                "data": None,
+                "message": timeout_message,
+            }
         return {
             "ok": False,
             "backend_url": backend_url,
@@ -110,7 +130,7 @@ def _call_backend(path: str, method: str = "GET", include_job_key: bool = False)
             "status_code": None,
             "latency_ms": latency_ms,
             "data": None,
-            "message": "Backend request timed out",
+            "message": timeout_message,
         }
     except Exception as exc:
         latency_ms = round((time.perf_counter() - started_at) * 1000)
@@ -148,8 +168,19 @@ def _check_backend_health() -> dict:
     }
 
 
-def _proxy_backend_job(path: str, method: str = "GET") -> func.HttpResponse:
-    result = _call_backend(path, method=method, include_job_key=True)
+def _proxy_backend_job(
+    path: str,
+    method: str = "GET",
+    timeout_seconds: int = BACKEND_TIMEOUT_SECONDS,
+    timeout_message: str = "Backend request timed out",
+) -> func.HttpResponse:
+    result = _call_backend(
+        path,
+        method=method,
+        include_job_key=True,
+        timeout_seconds=timeout_seconds,
+        timeout_message=timeout_message,
+    )
     if result["ok"] and result["data"] is not None:
         return _json_response(result["data"], status_code=result["status_code"] or 200)
 
@@ -199,7 +230,11 @@ def jobs_leaderboard_online(req: func.HttpRequest) -> func.HttpResponse:
 
 @app.route(route="ai/analyze-system", methods=["GET"], auth_level=func.AuthLevel.ANONYMOUS)
 def ai_analyze_system(req: func.HttpRequest) -> func.HttpResponse:
-    return _proxy_backend_job("/jobs/ai-system-analysis")
+    return _proxy_backend_job(
+        "/jobs/ai-system-analysis",
+        timeout_seconds=AI_ANALYSIS_TIMEOUT_SECONDS,
+        timeout_message=AI_ANALYSIS_TIMEOUT_MESSAGE,
+    )
 
 
 def _dashboard_html() -> str:
@@ -812,6 +847,9 @@ def _dashboard_html() -> str:
 
     async function runAnalysis() {
       els.analyzeBtn.disabled = true;
+      const originalLabel = els.analyzeBtn.textContent;
+      els.analyzeBtn.textContent = "Analyzing...";
+      showToast("Analyzing system with Azure OpenAI...");
       try {
         const response = await fetch('/api/ai/analyze-system', { cache: "no-store" });
         const text = await response.text();
@@ -830,8 +868,13 @@ def _dashboard_html() -> str:
         showToast(typeof message === "string" ? message : "Azure OpenAI analysis completed");
       } catch (error) {
         console.error("Azure OpenAI analysis failed", error);
-        showToast(error.message || "Azure OpenAI analysis request failed", true);
+        const message = error.message || "Azure OpenAI analysis request failed";
+        const friendlyMessage = message.toLowerCase().includes("timed out")
+          ? "Azure OpenAI analysis is taking longer than expected. Please try again."
+          : message;
+        showToast(friendlyMessage, true);
       } finally {
+        els.analyzeBtn.textContent = originalLabel;
         els.analyzeBtn.disabled = false;
         updateLastUpdated();
       }
