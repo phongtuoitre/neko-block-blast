@@ -6,6 +6,7 @@ import urllib.error
 import urllib.request
 
 import azure.functions as func
+from queue_jobs import process_queue_job_message, safe_job_type_for_log
 
 
 app = func.FunctionApp()
@@ -15,6 +16,11 @@ AI_ANALYSIS_TIMEOUT_SECONDS = 90
 AI_ANALYSIS_TIMEOUT_MESSAGE = (
     "Azure OpenAI analysis is taking longer than expected. Please try again."
 )
+QUEUE_JOB_BACKEND_ACTIONS = {
+    "refresh_leaderboard": ("/jobs/leaderboard-online", "GET"),
+    "match_finished": ("/jobs/leaderboard-online", "GET"),
+    "cleanup_rooms": ("/jobs/cleanup-expired-rooms", "POST"),
+}
 
 
 def _backend_base_url() -> str:
@@ -155,6 +161,52 @@ def _call_backend(
         if 200 <= status_code < 300
         else f"Backend returned HTTP {status_code}",
     }
+
+
+def _run_queue_job(job_type: str, payload: dict) -> dict:
+    path, method = QUEUE_JOB_BACKEND_ACTIONS[job_type]
+    return _call_backend(path, method=method, include_job_key=True)
+
+
+@app.queue_trigger(
+    arg_name="msg",
+    queue_name="neko-game-jobs",
+    connection="AzureWebJobsStorage",
+)
+def neko_game_jobs_queue(msg: func.QueueMessage) -> None:
+    result = process_queue_job_message(msg.get_body(), _run_queue_job)
+    job_type = safe_job_type_for_log(result.job_type)
+    backend_result = result.backend_result or {}
+
+    if result.status in {"invalid_json", "unsupported_type"}:
+        logging.warning(
+            "Neko queue job ignored status=%s type=%s elapsed_ms=%s error=%s",
+            result.status,
+            job_type,
+            result.elapsed_ms,
+            result.error,
+        )
+        return
+
+    if result.ok:
+        logging.info(
+            "Neko queue job processed type=%s elapsed_ms=%s backend_status_code=%s backend_latency_ms=%s",
+            job_type,
+            result.elapsed_ms,
+            backend_result.get("status_code"),
+            backend_result.get("latency_ms"),
+        )
+        return
+
+    logging.warning(
+        "Neko queue job failed status=%s type=%s elapsed_ms=%s backend_status_code=%s backend_latency_ms=%s error=%s",
+        result.status,
+        job_type,
+        result.elapsed_ms,
+        backend_result.get("status_code"),
+        backend_result.get("latency_ms"),
+        result.error,
+    )
 
 
 def _check_backend_health() -> dict:

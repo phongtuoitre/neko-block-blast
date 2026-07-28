@@ -9,6 +9,7 @@ Set cac bien moi truong trong Azure Function App:
 ```text
 NEKO_API_BASE_URL=https://<backend-app-service-url>
 NEKO_JOB_KEY=<same-value-as-backend-ADMIN_JOB_KEY>
+AzureWebJobsStorage=<connection-string-for-nekoblockblastnhom2>
 ```
 
 Backend FastAPI can co App Setting:
@@ -89,6 +90,26 @@ GET {NEKO_API_BASE_URL}/jobs/summary
 ```
 
 Log co the xem trong Azure Portal, muc Function App Log Stream hoac Application Insights.
+
+## Queue function
+
+`neko_game_jobs_queue` doc message JSON tu Azure Queue Storage:
+
+```text
+Storage Account: nekoblockblastnhom2
+Queue: neko-game-jobs
+Connection app setting: AzureWebJobsStorage
+```
+
+Message toi thieu:
+
+```json
+{"type":"refresh_leaderboard"}
+{"type":"match_finished","match_id":123}
+{"type":"cleanup_rooms"}
+```
+
+Function chi log job type, status, backend status code va thoi gian xu ly. Khong log full payload de tranh lo secret/token.
 
 ## Y nghia cloud
 
