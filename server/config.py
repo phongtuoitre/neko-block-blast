@@ -13,6 +13,13 @@ load_dotenv(BASE_DIR / ".env")
 SERVICE_NAME = "neko-block-blast-api"
 ACCESS_TOKEN_EXPIRE_MINUTES = int(os.getenv("ACCESS_TOKEN_EXPIRE_MINUTES", "60"))
 ALGORITHM = "HS256"
+APP_CONFIG_REFERENCE_PREFIX = "@Microsoft.AppConfiguration("
+APP_CONFIG_ENVIRONMENT_VARIABLES = (
+    "MAINTENANCE_MODE",
+    "AI_ASSISTANT_ENABLED",
+    "ROOM_EXPIRE_MINUTES",
+    "LEADERBOARD_LIMIT",
+)
 
 
 def get_database_url():
@@ -30,6 +37,77 @@ def get_admin_job_key():
     if os.getenv("WEBSITE_SITE_NAME") or os.getenv("WEBSITE_INSTANCE_ID"):
         return None
     return "test-job-key"
+
+
+def is_unresolved_app_config_reference(value: str | None) -> bool:
+    return bool(value and value.strip().startswith(APP_CONFIG_REFERENCE_PREFIX))
+
+
+def parse_bool_env_value(value: str | None, default: bool) -> bool:
+    if value is None or is_unresolved_app_config_reference(value):
+        return default
+
+    normalized_value = value.strip().casefold()
+    if normalized_value in {"true", "1", "yes", "on"}:
+        return True
+    if normalized_value in {"false", "0", "no", "off"}:
+        return False
+    return default
+
+
+def parse_int_env_value(
+    value: str | None,
+    default: int,
+    *,
+    minimum: int | None = None,
+    maximum: int | None = None,
+) -> int:
+    if value is None or is_unresolved_app_config_reference(value):
+        return default
+
+    try:
+        parsed_value = int(value.strip(), 10)
+    except (TypeError, ValueError):
+        return default
+
+    if minimum is not None and parsed_value < minimum:
+        return default
+    if maximum is not None and parsed_value > maximum:
+        return default
+    return parsed_value
+
+
+def app_config_references_resolved() -> bool:
+    return not any(
+        is_unresolved_app_config_reference(os.getenv(name))
+        for name in APP_CONFIG_ENVIRONMENT_VARIABLES
+    )
+
+
+def get_app_configuration_status():
+    return {
+        "source": "app_configuration_reference",
+        "references_resolved": app_config_references_resolved(),
+        "maintenance_mode": parse_bool_env_value(
+            os.getenv("MAINTENANCE_MODE"),
+            default=False,
+        ),
+        "ai_assistant_enabled": parse_bool_env_value(
+            os.getenv("AI_ASSISTANT_ENABLED"),
+            default=True,
+        ),
+        "room_expire_minutes": parse_int_env_value(
+            os.getenv("ROOM_EXPIRE_MINUTES"),
+            default=30,
+            minimum=1,
+        ),
+        "leaderboard_limit": parse_int_env_value(
+            os.getenv("LEADERBOARD_LIMIT"),
+            default=10,
+            minimum=1,
+            maximum=100,
+        ),
+    }
 
 
 def get_openai_endpoint_type(endpoint: str) -> str:

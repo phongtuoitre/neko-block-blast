@@ -1,6 +1,6 @@
 from fastapi import FastAPI
 
-from server.config import SERVICE_NAME
+from server.config import SERVICE_NAME, get_app_configuration_status
 from server.database import init_db
 from server.routers import auth, jobs, matches, rooms
 
@@ -27,6 +27,11 @@ def version_check():
         "deploy_from": "github-actions",
         "version": "ci-cd-test-01",
     }
+
+
+@app.get("/config/status")
+def config_status():
+    return get_app_configuration_status()
 
 
 app.router.routes.extend(auth.router.routes)
