@@ -140,3 +140,5 @@ class MatchRead(BaseModel):
     winner_user_id: int | None
     winner_team: int | None
     players: list[MatchPlayerRead]
+    event_blob_uploaded: bool | None = None
+    event_blob_path: str | None = None

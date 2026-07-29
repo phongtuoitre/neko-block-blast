@@ -11,3 +11,5 @@ psycopg[binary]
 gunicorn
 python-dotenv
 openai>=1.0.0
+azure-identity
+azure-storage-blob

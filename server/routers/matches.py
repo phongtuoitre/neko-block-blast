@@ -5,6 +5,10 @@ from sqlmodel import Session, select
 
 from server.database import get_session
 from server.dependencies import get_current_user
+from server.match_result_events import (
+    MatchResultBlobStatus,
+    upload_match_result_blob_from_rows,
+)
 from server.models import Match, MatchPlayer, Room, User
 from server.schemas import MatchPlayerRead, MatchRead, MatchScoreUpdate
 
@@ -71,6 +75,7 @@ def build_match_response(session: Session, match: Match, now=None) -> MatchRead:
     remaining_seconds = max(
         0, int((as_utc(match.ends_at) - current_time).total_seconds())
     )
+    event_blob_status = publish_finished_match_result_blob(match, room, rows)
     return MatchRead(
         match_id=match.id,
         room_code=room.room_code if room else "",
@@ -90,7 +95,15 @@ def build_match_response(session: Session, match: Match, now=None) -> MatchRead:
             )
             for match_player, user in rows
         ],
+        event_blob_uploaded=event_blob_status.uploaded,
+        event_blob_path=event_blob_status.path,
     )
+
+
+def publish_finished_match_result_blob(match, room, rows) -> MatchResultBlobStatus:
+    if match.status != "finished":
+        return MatchResultBlobStatus(uploaded=False, path=None)
+    return upload_match_result_blob_from_rows(match, room, rows)
 
 
 def get_match_or_404(session: Session, match_id: int) -> Match:
@@ -129,6 +142,14 @@ def submit_match_score(
     match = finalize_match(session, match)
     player = require_match_player(session, match, current_user.id)
     if match.status != "playing":
+        room = session.get(Room, match.room_id)
+        rows = session.exec(
+            select(MatchPlayer, User)
+            .join(User, User.id == MatchPlayer.user_id)
+            .where(MatchPlayer.match_id == match.id)
+            .order_by(MatchPlayer.team, MatchPlayer.id)
+        ).all()
+        publish_finished_match_result_blob(match, room, rows)
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
             detail="Match is not playing",
