@@ -1,0 +1,48 @@
+name: Deploy Azure Functions
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - "azure_functions/neko_monitor/**"
+      - "tests/test_neko_monitor_*.py"
+      - ".github/workflows/deploy-functions.yml"
+  workflow_dispatch:
+
+jobs:
+  deploy-functions:
+    runs-on: ubuntu-latest
+    env:
+      PYTHONPATH: ${{ github.workspace }}
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Python 3.12
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install Azure Functions dependencies
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -r azure_functions/neko_monitor/requirements.txt
+          python -m pip install pytest
+
+      - name: Run Azure Functions tests
+        run: |
+          python -m pytest \
+            tests/test_neko_monitor_event_grid.py \
+            tests/test_neko_monitor_queue_jobs.py
+
+      - name: Compile Azure Functions
+        run: python -m compileall azure_functions/neko_monitor
+
+      - name: Deploy to Azure Functions
+        uses: Azure/functions-action@v1
+        with:
+          app-name: func-neko-monitor-nhom2
+          package: azure_functions/neko_monitor
+          publish-profile: ${{ secrets.AZURE_FUNCTIONAPP_PUBLISH_PROFILE }}
