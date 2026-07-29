@@ -46,3 +46,5 @@ jobs:
           app-name: func-neko-monitor-nhom2
           package: azure_functions/neko_monitor
           publish-profile: ${{ secrets.AZURE_FUNCTIONAPP_PUBLISH_PROFILE }}
+          sku: flexconsumption
+          remote-build: true
