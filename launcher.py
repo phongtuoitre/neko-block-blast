@@ -1,11 +1,14 @@
 import json
+import logging
 import os
+import re
 import subprocess
 import sys
 from concurrent.futures import ThreadPoolExecutor
 
 import pygame
 
+from client_audio import stop_match_audio
 from client_api import (
     API_BASE_URL,
     ApiError,
@@ -27,6 +30,15 @@ from client_api import (
 pygame.init()
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+CLIENT_LOG_PATH = os.path.join(os.getcwd(), "neko_client.log")
+LOGGER = logging.getLogger("neko_client")
+if not LOGGER.handlers:
+    handler = logging.FileHandler(CLIENT_LOG_PATH, encoding="utf-8", delay=True)
+    handler.setFormatter(
+        logging.Formatter("%(asctime)s %(levelname)s %(name)s %(message)s")
+    )
+    LOGGER.addHandler(handler)
+LOGGER.setLevel(logging.INFO)
 
 WIDTH, HEIGHT = 850, 650
 FPS = 60
@@ -182,6 +194,18 @@ def is_valid_nickname_char(char):
     return char.isascii() and (char.isalnum() or char in (" ", "_"))
 
 
+def safe_log_text(value, limit=1200):
+    text = "" if value is None else str(value)
+    text = re.sub(
+        r"(?i)(authorization|access_token|api_key|connection|string|password|secret|sig|token)(['\"]?\s*[:=]\s*)[^,}\s]+",
+        r"\1\2[redacted]",
+        text,
+    )
+    if len(text) > limit:
+        return f"{text[:limit]}...[truncated]"
+    return text
+
+
 class Launcher:
     def __init__(self):
         self.screen = pygame.display.set_mode((WIDTH, HEIGHT))
@@ -281,6 +305,7 @@ class Launcher:
         self.last_room_poll = 0
         self.launching_match = False
         self.current_match_started = None
+        self.leave_room_in_progress = False
         self.online_message = ""
         self.online_error = ""
 
@@ -526,8 +551,13 @@ class Launcher:
         self.draw_team(1, pygame.Rect(55, 115, 350, 315))
         self.draw_team(2, pygame.Rect(445, 115, 350, 315))
 
+        leave_button = self.room_waiting_buttons[2]
+        original_leave_text = leave_button.text
+        if self.leave_room_in_progress:
+            leave_button.text = "ĐANG RỜI..."
         for button in self.room_waiting_buttons[:3]:
             button.draw(self.screen, pygame.mouse.get_pos())
+        leave_button.text = original_leave_text
         if (
             room.get("status") == "waiting"
             and self.is_current_user_host()
@@ -623,7 +653,13 @@ class Launcher:
         except SystemExit:
             pass
         finally:
+            stop_match_audio()
             self.restore_launcher_display()
+
+    def quit_launcher(self):
+        stop_match_audio()
+        pygame.quit()
+        sys.exit()
 
     def activate_first_field(self, fields):
         for index, field in enumerate(fields):
@@ -649,6 +685,7 @@ class Launcher:
 
     def logout(self, message=""):
         self.stop_room_polling()
+        stop_match_audio()
         self.access_token = None
         self.online_user = None
         self.current_user = None
@@ -656,6 +693,7 @@ class Launcher:
         self.player_name = ""
         self.launching_match = False
         self.current_match_started = None
+        self.leave_room_in_progress = False
         self.login_fields[1].value = ""
         self.online_error = message
         self.online_message = ""
@@ -827,6 +865,40 @@ class Launcher:
         self.room_poll_future = None
 
     @staticmethod
+    def is_already_left_room_error(error):
+        detail = getattr(error, "detail", "").casefold()
+        return (
+            getattr(error, "status_code", None) in {403, 404}
+            and (
+                "room not found" in detail
+                or "not in room" in detail
+                or "player is not in room" in detail
+                or "user is not in room" in detail
+            )
+        )
+
+    @staticmethod
+    def format_leave_room_error(error):
+        if getattr(error, "kind", "") == "connection":
+            return "Không kết nối được server khi rời phòng"
+        status_code = getattr(error, "status_code", None)
+        detail = safe_log_text(getattr(error, "detail", "")) or "không rõ lỗi"
+        if status_code:
+            return f"Không thể rời phòng (HTTP {status_code}: {detail})"
+        return f"Không thể rời phòng ({detail})"
+
+    def clear_room_state_after_leave(self):
+        self.current_room = None
+        self.stop_room_polling()
+        stop_match_audio()
+        self.launching_match = False
+        self.current_match_started = None
+        self.leave_room_in_progress = False
+        self.online_error = ""
+        self.online_message = ""
+        self.state = STATE_ONLINE_LOBBY
+
+    @staticmethod
     def poll_room_request(token, room_code):
         try:
             room = get_room(token, room_code)
@@ -867,6 +939,9 @@ class Launcher:
                 return
             if error:
                 if self.handle_expired_session(error):
+                    return
+                if self.is_already_left_room_error(error):
+                    self.clear_room_state_after_leave()
                     return
                 if error.kind == "connection":
                     self.online_error = "Tạm thời không kết nối được server"
@@ -1013,6 +1088,9 @@ class Launcher:
         except ApiError as exc:
             if self.handle_expired_session(exc):
                 return
+            if self.is_already_left_room_error(exc):
+                self.clear_room_state_after_leave()
+                return
             self.current_room = None
             self.state = STATE_ONLINE_LOBBY
 
@@ -1029,22 +1107,35 @@ class Launcher:
             self.set_room_error(exc)
 
     def leave_current_room(self):
+        if self.leave_room_in_progress:
+            return
         if not self.current_room:
-            self.stop_room_polling()
-            self.state = STATE_ONLINE_LOBBY
+            self.clear_room_state_after_leave()
             return
-        try:
-            leave_room(self.access_token, self.current_room["room_code"])
-        except ApiError as exc:
-            self.set_room_error(exc)
-            return
-        self.current_room = None
-        self.stop_room_polling()
-        self.launching_match = False
-        self.current_match_started = None
+        self.leave_room_in_progress = True
         self.online_error = ""
-        self.online_message = ""
-        self.state = STATE_ONLINE_LOBBY
+        self.online_message = "Đang rời phòng..."
+        room_code = self.current_room["room_code"]
+        self.stop_room_polling()
+        try:
+            leave_room(self.access_token, room_code)
+        except ApiError as exc:
+            LOGGER.warning(
+                "leave_room_failed status_code=%s detail=%s response_body=%s exception_type=%s",
+                getattr(exc, "status_code", None),
+                safe_log_text(getattr(exc, "detail", "")),
+                safe_log_text(getattr(exc, "response_body", "")),
+                type(exc).__name__,
+            )
+            if self.handle_expired_session(exc):
+                return
+            if self.is_already_left_room_error(exc):
+                self.clear_room_state_after_leave()
+                return
+            self.leave_room_in_progress = False
+            self.online_error = self.format_leave_room_error(exc)
+            return
+        self.clear_room_state_after_leave()
 
     def is_current_user_host(self):
         if not self.current_room or not self.online_user:
@@ -1063,8 +1154,7 @@ class Launcher:
         elif button_text == "ĐĂNG XUẤT":
             self.logout()
         elif button_text == "THOÁT":
-            pygame.quit()
-            sys.exit()
+            self.quit_launcher()
 
     def handle_form_event(
         self,
@@ -1107,13 +1197,11 @@ class Launcher:
     def handle_events(self):
         for event in pygame.event.get():
             if event.type == pygame.QUIT:
-                pygame.quit()
-                sys.exit()
+                self.quit_launcher()
 
             if event.type == pygame.KEYDOWN and event.key == pygame.K_ESCAPE:
                 if self.state in (STATE_MENU, STATE_NAME_INPUT, STATE_ONLINE):
-                    pygame.quit()
-                    sys.exit()
+                    self.quit_launcher()
                 if self.state in (STATE_LOGIN, STATE_REGISTER):
                     self.state = STATE_ONLINE
                 elif self.state in (STATE_FORGOT_PASSWORD, STATE_RESET_PASSWORD):
@@ -1161,8 +1249,7 @@ class Launcher:
                     self.online_message = ""
                     self.activate_first_field(self.register_fields)
                 elif self.online_buttons[2].is_clicked(event):
-                    pygame.quit()
-                    sys.exit()
+                    self.quit_launcher()
             elif self.state == STATE_LOGIN:
                 if self.login_password_toggle.is_clicked(event):
                     self.login_password_visible = not self.login_password_visible

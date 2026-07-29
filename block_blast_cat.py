@@ -8,6 +8,8 @@ import urllib.error
 import urllib.request
 from concurrent.futures import ThreadPoolExecutor
 
+from client_audio import play_match_music, stop_match_audio
+
 # Khởi tạo Pygame
 pygame.init()
 try:
@@ -509,6 +511,7 @@ class Game:
         self.snd_happy = get_sound("happy.mp3")
         self.snd_gameover = get_sound("gameover.mp3")
         self.snd_jumpscare = get_sound("kinhdi.mp3")
+        self.match_music_path = os.path.join(BASE_DIR, "bgm.mp3")
 
         self.is_jumpscare = False
         self.jumpscare_done = False
@@ -518,12 +521,13 @@ class Game:
         except:
             self.jumpscare_img = None
 
-        try:
-            pygame.mixer.music.load(os.path.join(BASE_DIR, "bgm.mp3"))
-            pygame.mixer.music.set_volume(0.3)
-            pygame.mixer.music.play(-1)
-        except Exception:
-            pass
+        self.start_match_audio()
+
+    def start_match_audio(self):
+        play_match_music(self.match_music_path)
+
+    def stop_match_audio(self):
+        stop_match_audio()
 
     # --- KHỞI TẠO LẠI BÀN CHƠI ---
     def reset_game(self):
@@ -541,11 +545,8 @@ class Game:
             self.cat_surprise.active = False
             self.cat_surprise.state = 'idle'
 
-            if not pygame.mixer.music.get_busy() and not self.is_jumpscare:
-                try:
-                    pygame.mixer.music.play(-1)
-                except:
-                    pass
+            if not self.is_jumpscare:
+                self.start_match_audio()
 
     # --- LOGIC GAME CHÍNH ---
     def spawn_blocks(self):
@@ -587,7 +588,7 @@ class Game:
         if self.score >= 10000 and not self.jumpscare_done:
             self.is_jumpscare = True
             self.jumpscare_done = True
-            pygame.mixer.music.stop()
+            self.stop_match_audio()
             if self.snd_jumpscare: self.snd_jumpscare.play()
 
         self.check_game_over()
@@ -624,6 +625,7 @@ class Game:
                     if self.can_place(block, r, c): return
 
         self.game_over = True
+        self.stop_match_audio()
         if self.online_mode:
             return
         self.save_leaderboard()  # CHẾT LÀ LƯU ĐIỂM NGAY!
@@ -631,9 +633,9 @@ class Game:
         if hasattr(self, 'cat_surprise'):
             self.cat_surprise.trigger()
             if self.snd_gameover: self.snd_gameover.play()
-            pygame.mixer.music.stop()
 
     def request_exit(self):
+        self.stop_match_audio()
         if self.online_poll_executor:
             self.online_poll_executor.shutdown(wait=False, cancel_futures=True)
             self.online_poll_executor = None
@@ -692,6 +694,7 @@ class Game:
             if self.state == STATE_PLAY and self.game_over:
                 if not self.online_mode and event.type == pygame.KEYDOWN:
                     if event.key == pygame.K_RETURN:
+                        self.stop_match_audio()
                         self.state = STATE_LEADERBOARD
                     elif event.key == pygame.K_ESCAPE:
                         self.request_exit()
@@ -998,9 +1001,14 @@ class Game:
             self.online_opponent_score = opponent.get("score", 0)
         if my_player:
             self.online_server_score = my_player.get("score", 0)
-        if match_state.get("status") == "finished":
+        if match_state.get("status") in {"finished", "cancelled", "abandoned"}:
             self.online_finished = True
-            self.online_result = my_player.get("result") if my_player else "draw"
+            self.online_result = (
+                "cancelled"
+                if match_state.get("status") != "finished"
+                else my_player.get("result") if my_player else "draw"
+            )
+            self.stop_match_audio()
             if self.dragging_block:
                 self.dragging_block.reset_pos()
                 self.dragging_block.is_dragging = False
@@ -1030,11 +1038,13 @@ class Game:
                 self.online_connection_error = "Phiên đăng nhập hết hạn"
                 self.online_connection_lost = True
                 self.online_reconnecting = False
+                self.stop_match_audio()
                 return
             if error.code == 404:
                 self.online_connection_error = "Không tìm thấy trận đấu"
                 self.online_connection_lost = True
                 self.online_reconnecting = False
+                self.stop_match_audio()
                 return
         self.register_online_connection_failure()
 
@@ -1088,6 +1098,7 @@ class Game:
             self.online_connection_error = "Mất kết nối server"
             self.online_connection_lost = True
             self.online_reconnecting = False
+            self.stop_match_audio()
             if self.dragging_block:
                 self.dragging_block.reset_pos()
                 self.dragging_block.is_dragging = False
@@ -1104,7 +1115,12 @@ class Game:
             title_text = self.online_connection_error
             detail_text = "Nhấn ESC để thoát"
         else:
-            result_labels = {"win": "Thắng", "lose": "Thua", "draw": "Hòa"}
+            result_labels = {
+                "win": "Thắng",
+                "lose": "Thua",
+                "draw": "Hòa",
+                "cancelled": "Trận đã hủy",
+            }
             title_text = result_labels.get(self.online_result, "Hòa")
             detail_text = (
                 f"Điểm của bạn: {self.online_server_score}    "
@@ -1124,6 +1140,12 @@ class Game:
 
     # --- VÒNG LẶP CHÍNH ---
     def run(self):
+        try:
+            self._run_loop()
+        finally:
+            self.stop_match_audio()
+
+    def _run_loop(self):
         while self.running:
             self.poll_online_match()
             # ================= BẪY JUMPSCARE CHẶN ĐỨNG TRÒ CHƠI =================
@@ -1190,16 +1212,19 @@ def run_game(
     normalized_player_name = (player_name or "").strip()[:20]
     if start_in_play is None:
         start_in_play = bool(normalized_player_name)
-    game = Game(
-        player_name=normalized_player_name,
-        online_match=online_match,
-        match_id=match_id,
-        api_base_url=api_base_url,
-        access_token=access_token,
-        start_in_play=start_in_play,
-        embedded=embedded,
-    )
-    game.run()
+    try:
+        game = Game(
+            player_name=normalized_player_name,
+            online_match=online_match,
+            match_id=match_id,
+            api_base_url=api_base_url,
+            access_token=access_token,
+            start_in_play=start_in_play,
+            embedded=embedded,
+        )
+        game.run()
+    finally:
+        stop_match_audio()
 
 
 if __name__ == "__main__":

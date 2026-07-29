@@ -13,11 +13,12 @@ TIMEOUT_SECONDS = 5
 
 
 class ApiError(Exception):
-    def __init__(self, kind, detail="", status_code=None):
+    def __init__(self, kind, detail="", status_code=None, response_body=""):
         super().__init__(detail)
         self.kind = kind
         self.detail = detail
         self.status_code = status_code
+        self.response_body = response_body
 
 
 def _request(path, method="GET", data=None, headers=None):
@@ -29,16 +30,21 @@ def _request(path, method="GET", data=None, headers=None):
     )
     try:
         with urllib.request.urlopen(request, timeout=TIMEOUT_SECONDS) as response:
-            return json.loads(response.read().decode("utf-8"))
+            raw_body = response.read().decode("utf-8")
+            if not raw_body:
+                return {}
+            return json.loads(raw_body)
     except urllib.error.HTTPError as exc:
+        response_body = ""
         try:
-            payload = json.loads(exc.read().decode("utf-8"))
+            response_body = exc.read().decode("utf-8", errors="replace")
+            payload = json.loads(response_body)
             detail = payload.get("detail", "")
         except (UnicodeDecodeError, json.JSONDecodeError):
             detail = ""
-        raise ApiError("http", str(detail), exc.code) from exc
+        raise ApiError("http", str(detail), exc.code, response_body) from exc
     except (urllib.error.URLError, TimeoutError, OSError) as exc:
-        raise ApiError("connection") from exc
+        raise ApiError("connection", type(exc).__name__) from exc
 
 
 def login(username, password):
