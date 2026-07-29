@@ -111,6 +111,27 @@ Message toi thieu:
 
 Function chi log job type, status, backend status code va thoi gian xu ly. Khong log full payload de tranh lo secret/token.
 
+## Event Grid function
+
+`blob_upload_eventgrid` nhan su kien Azure Event Grid tu Storage Account:
+
+```text
+Storage Account: nekoblockblastnhom2
+Container: eventgrid-demo
+Event type: Microsoft.Storage.BlobCreated
+```
+
+Function chi xu ly `Microsoft.Storage.BlobCreated`, log metadata blob da sanitize va khong tai noi dung file xuong. URL blob trong log duoc bo query string de tranh ghi SAS token hoac secret.
+
+## Deploy Function App
+
+Repo hien khong co GitHub Actions workflow rieng cho Azure Functions. Function project day du nam trong thu muc nay va co the deploy bang Azure Functions Core Tools:
+
+```powershell
+cd azure_functions/neko_monitor
+func azure functionapp publish func-neko-monitor-nhom2
+```
+
 ## Y nghia cloud
 
 Azure Functions dong vai tro serverless worker doc lap: monitor backend, don phong waiting qua lau, lay thong ke he thong va tong hop leaderboard online. Backend FastAPI van chay tren Azure App Service, game client va gameplay khong bi thay doi.

@@ -6,7 +6,18 @@ import urllib.error
 import urllib.request
 
 import azure.functions as func
-from queue_jobs import process_queue_job_message, safe_job_type_for_log
+
+try:
+    from queue_jobs import process_queue_job_message, safe_job_type_for_log
+    from event_grid import build_blob_upload_eventgrid_info
+except ModuleNotFoundError:
+    from azure_functions.neko_monitor.event_grid import (
+        build_blob_upload_eventgrid_info,
+    )
+    from azure_functions.neko_monitor.queue_jobs import (
+        process_queue_job_message,
+        safe_job_type_for_log,
+    )
 
 
 app = func.FunctionApp()
@@ -166,6 +177,27 @@ def _call_backend(
 def _run_queue_job(job_type: str, payload: dict) -> dict:
     path, method = QUEUE_JOB_BACKEND_ACTIONS[job_type]
     return _call_backend(path, method=method, include_job_key=True)
+
+
+@app.event_grid_trigger(arg_name="event")
+def blob_upload_eventgrid(event: func.EventGridEvent) -> None:
+    event_info = build_blob_upload_eventgrid_info(event)
+    if not event_info.should_process:
+        logging.info(
+            "Neko Event Grid ignored: event_id=%s, event_type=%s, subject=%s",
+            event_info.event_id,
+            event_info.event_type,
+            event_info.subject,
+        )
+        return
+
+    logging.info(
+        "Neko Event Grid blob created: event_id=%s, blob_url=%s, content_type=%s, content_length=%s",
+        event_info.event_id,
+        event_info.blob_url,
+        event_info.content_type,
+        event_info.content_length,
+    )
 
 
 @app.queue_trigger(
