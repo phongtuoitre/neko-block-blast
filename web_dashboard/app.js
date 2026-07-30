@@ -5,10 +5,9 @@ const API = Object.freeze({
   gateway: API_BASE,
   health: `${API_BASE}/health`,
   version: `${API_BASE}/version`,
-  leaderboard: `${API_BASE}/jobs/leaderboard-online`
+  dashboard: `${API_BASE}/public/dashboard`
 });
 
-const DOWNLOAD_URL = 'https://nekoblockblastnhom2.blob.core.windows.net/game-demo/NekoBlockBlast.exe';
 const REQUEST_TIMEOUT_MS = 10000;
 
 const elements = {};
@@ -23,28 +22,28 @@ document.addEventListener('DOMContentLoaded', () => {
 });
 
 function cacheElements() {
-  elements.apiPayload = document.getElementById('apiPayload');
   elements.backendStatus = document.getElementById('backendStatus');
+  elements.dashboardUpdatedAt = document.getElementById('dashboardUpdatedAt');
   elements.deploySourceValue = document.getElementById('deploySourceValue');
-  elements.downloadLink = document.getElementById('downloadLink');
   elements.gatewayValue = document.getElementById('gatewayValue');
+  elements.highestScoreName = document.getElementById('highestScoreName');
+  elements.highestScoreValue = document.getElementById('highestScoreValue');
   elements.lastChecked = document.getElementById('lastChecked');
   elements.leaderboardBody = document.getElementById('leaderboardBody');
-  elements.leaderboardCaption = document.getElementById('leaderboardCaption');
-  elements.leaderboardStatus = document.getElementById('leaderboardStatus');
+  elements.mostMatchesName = document.getElementById('mostMatchesName');
+  elements.mostMatchesValue = document.getElementById('mostMatchesValue');
+  elements.mostWinsName = document.getElementById('mostWinsName');
+  elements.mostWinsValue = document.getElementById('mostWinsValue');
+  elements.recentMatchesBody = document.getElementById('recentMatchesBody');
+  elements.recentTimeHeader = document.getElementById('recentTimeHeader');
   elements.refreshButton = document.getElementById('refreshButton');
   elements.serviceValue = document.getElementById('serviceValue');
   elements.statusDot = document.getElementById('statusDot');
   elements.statusMessage = document.getElementById('statusMessage');
-  elements.topMatchesValue = document.getElementById('topMatchesValue');
-  elements.topScoreValue = document.getElementById('topScoreValue');
-  elements.topWinsValue = document.getElementById('topWinsValue');
-  elements.versionNote = document.getElementById('versionNote');
   elements.versionValue = document.getElementById('versionValue');
 }
 
 function hydrateStaticValues() {
-  elements.downloadLink.href = DOWNLOAD_URL;
   elements.gatewayValue.textContent = API.gateway;
 }
 
@@ -55,33 +54,23 @@ async function refreshDashboard() {
 
   isRefreshing = true;
   setLoadingState(true);
-  setBackendStatus('checking', 'Đang gọi /health qua Azure API Management.');
+  setBackendStatus('checking', 'Đang kiểm tra trạng thái backend.');
   setText(elements.serviceValue, 'Đang tải');
   setText(elements.versionValue, 'Đang tải');
   setText(elements.deploySourceValue, 'Đang tải');
-  setText(elements.versionNote, 'Từ JSON /version');
-  setLeaderboardLoading();
-  setAchievementLoading();
-  setPayload({});
+  setDashboardLoading();
 
-  const [healthResult, versionResult, leaderboardResult] = await Promise.allSettled([
+  const [healthResult, versionResult, dashboardResult] = await Promise.allSettled([
     fetchJson(API.health),
     fetchJson(API.version),
-    fetchJson(API.leaderboard)
+    fetchJson(API.dashboard)
   ]);
-
-  const payload = {
-    health: normalizeSettledResult(healthResult),
-    version: normalizeSettledResult(versionResult),
-    leaderboard: normalizeSettledResult(leaderboardResult)
-  };
 
   handleHealthResult(healthResult);
   handleVersionResult(versionResult);
-  handleLeaderboardResult(leaderboardResult);
+  handleDashboardResult(dashboardResult);
 
   elements.lastChecked.textContent = `Cập nhật: ${formatDateTime(new Date())}`;
-  setPayload(payload);
   setLoadingState(false);
   isRefreshing = false;
 }
@@ -89,40 +78,40 @@ async function refreshDashboard() {
 function handleHealthResult(result) {
   if (result.status === 'fulfilled') {
     const healthData = result.value;
-    const service = typeof healthData.service === 'string' ? healthData.service : 'Không xác định';
-    setBackendStatus('online', 'Backend phản hồi thành công qua /health.');
+    const service = readStringField(healthData, 'service');
+    setBackendStatus('online', 'Backend đang phản hồi bình thường.');
     setText(elements.serviceValue, service);
     return;
   }
 
-  setBackendStatus('offline', formatError(result.reason));
+  setBackendStatus('offline', 'Không thể kết nối backend. Vui lòng kiểm tra lại sau.');
   setText(elements.serviceValue, 'Không truy cập được');
 }
 
 function handleVersionResult(result) {
   if (result.status === 'fulfilled') {
     const versionData = result.value;
+    const deploySource = readStringField(versionData, 'deploy_from');
     setText(elements.versionValue, readStringField(versionData, 'version'));
-    setText(elements.deploySourceValue, readStringField(versionData, 'deploy_from'));
-    setText(elements.versionNote, 'Nhận từ GET /version');
+    setText(elements.deploySourceValue, deploySource);
     return;
   }
 
   setText(elements.versionValue, 'Không truy cập được');
-  setText(elements.deploySourceValue, 'Không truy cập được');
-  setText(elements.versionNote, formatShortError(result.reason));
+  setText(elements.deploySourceValue, 'Chưa có thông tin');
 }
 
-function handleLeaderboardResult(result) {
+function handleDashboardResult(result) {
   if (result.status !== 'fulfilled') {
-    renderLeaderboardError(result.reason);
-    setAchievementUnavailable(result.reason);
+    setDashboardUnavailable();
     return;
   }
 
-  const rows = Array.isArray(result.value.leaderboard) ? result.value.leaderboard : [];
-  renderLeaderboard(rows);
-  renderAchievementSummary(rows);
+  const data = result.value;
+  renderHighlights(data.highlights || {});
+  renderLeaderboard(Array.isArray(data.leaderboard) ? data.leaderboard : []);
+  renderRecentMatches(Array.isArray(data.recent_matches) ? data.recent_matches : []);
+  setDashboardUpdatedAt(data.updated_at);
 }
 
 async function fetchJson(url) {
@@ -143,11 +132,7 @@ async function fetchJson(url) {
     const data = parseJsonBody(bodyText);
 
     if (!response.ok) {
-      const error = new Error(`HTTP ${response.status} ${response.statusText || ''}`.trim());
-      error.status = response.status;
-      error.data = data;
-      error.url = url;
-      throw error;
+      throw new Error(`HTTP ${response.status}`);
     }
 
     return data;
@@ -164,99 +149,121 @@ function parseJsonBody(bodyText) {
   try {
     return JSON.parse(bodyText);
   } catch (error) {
-    return {
-      raw: bodyText
-    };
+    return {};
   }
+}
+
+function setDashboardLoading() {
+  setHighlight(elements.highestScoreValue, elements.highestScoreName, null, 'điểm');
+  setHighlight(elements.mostMatchesValue, elements.mostMatchesName, null, 'trận');
+  setHighlight(elements.mostWinsValue, elements.mostWinsName, null, 'trận thắng');
+  setText(elements.dashboardUpdatedAt, 'Đang tải');
+  elements.dashboardUpdatedAt.className = 'pill pill-checking';
+  replaceTableWithMessage(elements.leaderboardBody, 6, 'Đang tải bảng xếp hạng...');
+  replaceTableWithMessage(elements.recentMatchesBody, 5, 'Đang tải trận gần đây...');
+  setRecentTimeColumn(true);
+}
+
+function setDashboardUnavailable() {
+  setHighlight(elements.highestScoreValue, elements.highestScoreName, null, 'điểm');
+  setHighlight(elements.mostMatchesValue, elements.mostMatchesName, null, 'trận');
+  setHighlight(elements.mostWinsValue, elements.mostWinsName, null, 'trận thắng');
+  replaceTableWithMessage(elements.leaderboardBody, 6, 'Chưa có dữ liệu xếp hạng.');
+  replaceTableWithMessage(elements.recentMatchesBody, 5, 'Chưa có trận đấu hoàn thành.');
+  setText(elements.dashboardUpdatedAt, 'Chưa có dữ liệu');
+  elements.dashboardUpdatedAt.className = 'pill pill-neutral';
+  setRecentTimeColumn(true);
+}
+
+function renderHighlights(highlights) {
+  setHighlight(
+    elements.highestScoreValue,
+    elements.highestScoreName,
+    highlights.highest_score,
+    'điểm'
+  );
+  setHighlight(
+    elements.mostMatchesValue,
+    elements.mostMatchesName,
+    highlights.most_matches,
+    'trận'
+  );
+  setHighlight(
+    elements.mostWinsValue,
+    elements.mostWinsName,
+    highlights.most_wins,
+    'trận thắng'
+  );
+}
+
+function setHighlight(valueElement, nameElement, highlight, unit) {
+  if (!highlight || !highlight.display_name) {
+    setText(valueElement, 'Chưa có dữ liệu');
+    setText(nameElement, unit);
+    return;
+  }
+
+  setText(valueElement, formatNumber(highlight.value));
+  setText(nameElement, `${highlight.display_name} - ${unit}`);
 }
 
 function renderLeaderboard(rows) {
   elements.leaderboardBody.replaceChildren();
-  setPill(elements.leaderboardStatus, 'Online', 'pill-online');
 
   if (rows.length === 0) {
-    appendEmptyLeaderboardRow('API trả về leaderboard rỗng.');
-    elements.leaderboardCaption.textContent = 'GET /jobs/leaderboard-online trả về {"leaderboard":[]}.';
+    replaceTableWithMessage(elements.leaderboardBody, 6, 'Chưa có dữ liệu xếp hạng.');
     return;
   }
 
   rows.forEach((row, index) => {
     const tr = document.createElement('tr');
-    appendCell(tr, `#${index + 1}`);
+    appendCell(tr, `#${row.rank || index + 1}`);
     appendPlayerCell(tr, row);
-    appendCell(tr, formatNumber(row.wins));
     appendCell(tr, formatNumber(row.matches));
+    appendCell(tr, formatNumber(row.wins));
     appendCell(tr, formatNumber(row.total_score));
+    appendCell(tr, formatNumber(row.best_score));
     elements.leaderboardBody.appendChild(tr);
   });
-
-  elements.leaderboardCaption.textContent =
-    'Dữ liệu từ GET /jobs/leaderboard-online: user_id, username, display_name, wins, matches, total_score.';
 }
 
-function renderLeaderboardError(error) {
-  elements.leaderboardBody.replaceChildren();
+function renderRecentMatches(rows) {
+  const hasTimestamp = rows.some((row) => Boolean(row.finished_at));
+  const colSpan = hasTimestamp ? 5 : 4;
+  elements.recentMatchesBody.replaceChildren();
+  setRecentTimeColumn(hasTimestamp);
 
-  if (requiresBackendSecret(error)) {
-    setPill(elements.leaderboardStatus, 'Cần X-Job-Key', 'pill-locked');
-    appendEmptyLeaderboardRow(
-      'Endpoint /jobs/leaderboard-online yêu cầu X-Job-Key. Dashboard không nhúng key hoặc secret trong frontend.'
-    );
-    elements.leaderboardCaption.textContent =
-      'Không gửi X-Job-Key từ frontend, nên bảng xếp hạng chỉ hiển thị khi backend/APIM có endpoint public riêng.';
-    return;
-  }
-
-  setPill(elements.leaderboardStatus, 'Lỗi', 'pill-offline');
-  appendEmptyLeaderboardRow(formatError(error));
-  elements.leaderboardCaption.textContent = 'Không thể tải leaderboard qua APIM.';
-}
-
-function renderAchievementSummary(rows) {
   if (rows.length === 0) {
-    setText(elements.topScoreValue, 'Chưa có dữ liệu');
-    setText(elements.topMatchesValue, 'Chưa có dữ liệu');
-    setText(elements.topWinsValue, 'Chưa có dữ liệu');
+    replaceTableWithMessage(
+      elements.recentMatchesBody,
+      colSpan,
+      'Chưa có trận đấu hoàn thành.'
+    );
     return;
   }
 
-  const topScore = maxBy(rows, (row) => numberValue(row.total_score));
-  const topMatches = maxBy(rows, (row) => numberValue(row.matches));
-  const topWins = maxBy(rows, (row) => numberValue(row.wins));
-
-  setText(elements.topScoreValue, formatMetricWithPlayer(topScore, 'total_score'));
-  setText(elements.topMatchesValue, formatMetricWithPlayer(topMatches, 'matches'));
-  setText(elements.topWinsValue, formatMetricWithPlayer(topWins, 'wins'));
+  rows.forEach((row) => {
+    const tr = document.createElement('tr');
+    appendCell(tr, `#${row.match_id}`);
+    appendCell(tr, row.mode || 'Không xác định');
+    appendCell(tr, row.winner_display_name || 'Hòa');
+    appendCell(tr, formatNumber(row.top_score));
+    if (hasTimestamp) {
+      appendCell(tr, row.finished_at ? formatDateTime(new Date(row.finished_at)) : '');
+    }
+    elements.recentMatchesBody.appendChild(tr);
+  });
 }
 
-function setAchievementLoading() {
-  setText(elements.topScoreValue, 'Đang tải');
-  setText(elements.topMatchesValue, 'Đang tải');
-  setText(elements.topWinsValue, 'Đang tải');
-}
+function setDashboardUpdatedAt(value) {
+  if (!value) {
+    setText(elements.dashboardUpdatedAt, 'Chưa có dữ liệu');
+    elements.dashboardUpdatedAt.className = 'pill pill-neutral';
+    return;
+  }
 
-function setAchievementUnavailable(error) {
-  const value = requiresBackendSecret(error) ? 'Cần X-Job-Key' : 'Không truy cập được';
-  setText(elements.topScoreValue, value);
-  setText(elements.topMatchesValue, value);
-  setText(elements.topWinsValue, value);
-}
-
-function setLeaderboardLoading() {
-  setPill(elements.leaderboardStatus, 'Đang tải', 'pill-checking');
-  elements.leaderboardBody.replaceChildren();
-  appendEmptyLeaderboardRow('Đang tải bảng xếp hạng...');
-  elements.leaderboardCaption.textContent = 'Endpoint đã xác minh: GET /jobs/leaderboard-online.';
-}
-
-function appendEmptyLeaderboardRow(message) {
-  const tr = document.createElement('tr');
-  const td = document.createElement('td');
-  td.colSpan = 5;
-  td.className = 'empty-cell';
-  td.textContent = message;
-  tr.appendChild(td);
-  elements.leaderboardBody.appendChild(tr);
+  setText(elements.dashboardUpdatedAt, `Cập nhật ${formatDateTime(new Date(value))}`);
+  elements.dashboardUpdatedAt.className = 'pill pill-online';
 }
 
 function appendPlayerCell(tr, row) {
@@ -266,8 +273,8 @@ function appendPlayerCell(tr, row) {
   const username = document.createElement('small');
 
   wrapper.className = 'player-cell';
-  name.textContent = readStringField(row, 'display_name');
-  username.textContent = readStringField(row, 'username');
+  name.textContent = row.display_name || 'Không xác định';
+  username.textContent = row.username || '';
 
   wrapper.appendChild(name);
   wrapper.appendChild(username);
@@ -279,6 +286,20 @@ function appendCell(tr, value) {
   const td = document.createElement('td');
   td.textContent = value;
   tr.appendChild(td);
+}
+
+function replaceTableWithMessage(tbody, colSpan, message) {
+  const tr = document.createElement('tr');
+  const td = document.createElement('td');
+  td.colSpan = colSpan;
+  td.className = 'empty-cell';
+  td.textContent = message;
+  tr.appendChild(td);
+  tbody.replaceChildren(tr);
+}
+
+function setRecentTimeColumn(isVisible) {
+  elements.recentTimeHeader.hidden = !isVisible;
 }
 
 function setBackendStatus(state, message) {
@@ -300,33 +321,8 @@ function setLoadingState(isLoading) {
   elements.refreshButton.setAttribute('aria-busy', String(isLoading));
 }
 
-function setPayload(data) {
-  elements.apiPayload.textContent = JSON.stringify(data, null, 2);
-}
-
-function setPill(element, label, className) {
-  element.textContent = label;
-  element.className = `pill ${className}`;
-}
-
 function setText(element, value) {
   element.textContent = value;
-}
-
-function normalizeSettledResult(result) {
-  if (result.status === 'fulfilled') {
-    return {
-      ok: true,
-      data: result.value
-    };
-  }
-
-  return {
-    ok: false,
-    error: formatError(result.reason),
-    status: result.reason && result.reason.status ? result.reason.status : null,
-    data: result.reason && result.reason.data ? result.reason.data : null
-  };
 }
 
 function readStringField(data, fieldName) {
@@ -338,56 +334,18 @@ function readStringField(data, fieldName) {
   return typeof value === 'string' && value.trim() ? value.trim() : 'Không xác định';
 }
 
-function requiresBackendSecret(error) {
-  return Boolean(error && (error.status === 401 || error.status === 403 || error.status === 503));
-}
-
-function numberValue(value) {
-  const number = Number(value);
-  return Number.isFinite(number) ? number : 0;
-}
-
-function maxBy(rows, selector) {
-  return rows.reduce((best, row) => (selector(row) > selector(best) ? row : best), rows[0]);
-}
-
-function formatMetricWithPlayer(row, fieldName) {
-  const name = readStringField(row, 'display_name');
-  return `${formatNumber(row[fieldName])} - ${name}`;
-}
-
 function formatNumber(value) {
-  return new Intl.NumberFormat('vi-VN').format(numberValue(value));
+  const number = Number(value);
+  return new Intl.NumberFormat('vi-VN').format(Number.isFinite(number) ? number : 0);
 }
 
 function formatDateTime(date) {
+  if (Number.isNaN(date.getTime())) {
+    return '';
+  }
+
   return new Intl.DateTimeFormat('vi-VN', {
     dateStyle: 'short',
     timeStyle: 'medium'
   }).format(date);
-}
-
-function formatShortError(error) {
-  if (error && error.status) {
-    return `HTTP ${error.status}`;
-  }
-
-  if (error && error.name === 'AbortError') {
-    return 'Hết thời gian chờ';
-  }
-
-  return 'Không thể kết nối';
-}
-
-function formatError(error) {
-  if (error && error.name === 'AbortError') {
-    return 'Không nhận được phản hồi từ API Management trong thời gian chờ.';
-  }
-
-  if (error && error.status) {
-    const detail = error.data && error.data.detail ? ` Chi tiết: ${error.data.detail}` : '';
-    return `API Management trả về HTTP ${error.status}.${detail}`;
-  }
-
-  return 'Không thể kết nối tới API Management. Có thể backend offline, mất mạng hoặc CORS chưa cho phép website này.';
 }

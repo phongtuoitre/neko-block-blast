@@ -142,3 +142,40 @@ class MatchRead(BaseModel):
     players: list[MatchPlayerRead]
     event_blob_uploaded: bool | None = None
     event_blob_path: str | None = None
+
+
+class PublicDashboardLeaderboardItem(BaseModel):
+    rank: int
+    user_id: int
+    username: str
+    display_name: str
+    matches: int
+    wins: int
+    total_score: int
+    best_score: int
+
+
+class PublicDashboardHighlight(BaseModel):
+    display_name: str | None = None
+    value: int = 0
+
+
+class PublicDashboardHighlights(BaseModel):
+    highest_score: PublicDashboardHighlight
+    most_matches: PublicDashboardHighlight
+    most_wins: PublicDashboardHighlight
+
+
+class PublicDashboardRecentMatch(BaseModel):
+    match_id: int
+    mode: str
+    winner_display_name: str | None = None
+    top_score: int
+    finished_at: datetime | None = None
+
+
+class PublicDashboardRead(BaseModel):
+    updated_at: datetime
+    leaderboard: list[PublicDashboardLeaderboardItem]
+    highlights: PublicDashboardHighlights
+    recent_matches: list[PublicDashboardRecentMatch]

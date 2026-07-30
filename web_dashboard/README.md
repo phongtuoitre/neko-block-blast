@@ -1,98 +1,42 @@
 # Neko Block Blast Cloud Dashboard
 
-Dashboard tĩnh cho dự án Neko Block Blast. Website dùng HTML, CSS và JavaScript thuần, không có React, Node.js, thư viện ngoài, APIM subscription key, JWT cố định, password, secret hoặc connection string ở frontend.
+Dashboard thành tích công khai cho dự án Neko Block Blast. Website dùng HTML, CSS và JavaScript thuần, không có React, Node.js, thư viện ngoài hoặc thông tin nhạy cảm trong frontend.
 
-## Backend endpoints đã xác minh
+## API frontend sử dụng
 
-Nguồn kiểm tra: `server/main.py`, `server/routers/jobs.py`, `server/routers/matches.py`, `server/routers/rooms.py`, `server/schemas.py` và test hiện có.
-
-Base APIM được frontend dùng:
+Base APIM:
 
 ```text
 https://apim-neko-game-nhom2-2026.azure-api.net/neko
 ```
 
-Endpoint public:
+Endpoint được gọi:
 
-- `GET /health`
-  - Response thật: `{"status":"ok","service":"neko-block-blast-api"}`
-- `GET /version`
-  - Response thật: `{"deploy_from":"github-actions","version":"ci-cd-test-01"}`
+- `GET /health`: trạng thái backend và tên service.
+- `GET /version`: phiên bản backend và nguồn deploy.
+- `GET /public/dashboard`: dữ liệu thành tích công khai.
 
-Endpoint leaderboard hiện có:
+Frontend chỉ gọi API khi trang vừa mở hoặc khi người dùng bấm `Kiểm tra lại`. Không có polling liên tục.
 
-- `GET /jobs/leaderboard-online`
-  - Backend yêu cầu header `X-Job-Key`.
-  - Frontend không nhúng key nên chỉ gọi không key và hiển thị thông báo nếu nhận `401`, `403` hoặc `503`.
-  - Response khi hợp lệ:
+## Dữ liệu dashboard
 
-```json
-{
-  "leaderboard": [
-    {
-      "user_id": 1,
-      "username": "player",
-      "display_name": "Player",
-      "wins": 0,
-      "matches": 0,
-      "total_score": 0
-    }
-  ]
-}
-```
+`GET /public/dashboard` trả dữ liệu tổng hợp công khai:
 
-Endpoint điểm/trận hiện có nhưng cần Bearer token:
+- `leaderboard`: tối đa 10 người chơi, gồm hạng, username, display name, số trận, số trận thắng, tổng điểm và điểm cao nhất.
+- `highlights`: điểm cao nhất, người chơi nhiều trận nhất và người chơi thắng nhiều nhất.
+- `recent_matches`: tối đa 10 trận hoàn thành gần đây.
 
-- `POST /matches/{match_id}/score`
-- `GET /matches/{match_id}`
-- `GET /rooms/{room_code}/active-match`
-
-Các endpoint này trả `MatchRead` gồm:
-
-```json
-{
-  "match_id": 1,
-  "room_code": "ABC123",
-  "mode": "1v1",
-  "status": "playing",
-  "remaining_seconds": 120,
-  "winner_user_id": null,
-  "winner_team": null,
-  "players": [
-    {
-      "user_id": 1,
-      "username": "player",
-      "display_name": "Player",
-      "team": 1,
-      "score": 0,
-      "result": null
-    }
-  ],
-  "event_blob_uploaded": false,
-  "event_blob_path": null
-}
-```
-
-Không tìm thấy endpoint FastAPI công khai cho danh sách trận gần đây hoặc thành tích riêng. Dashboard chỉ hiển thị điểm/thắng/trận từ leaderboard nếu endpoint đó truy cập được qua APIM mà không cần secret.
+Website không hardcode dữ liệu người chơi mẫu. Nếu chưa có dữ liệu, UI hiển thị trạng thái rỗng thân thiện.
 
 ## File
 
 - `index.html`: giao diện dashboard.
 - `styles.css`: giao diện responsive.
-- `app.js`: gọi `/health`, `/version`, `/jobs/leaderboard-online` qua APIM.
+- `app.js`: gọi API public qua APIM.
 - `staticwebapp.config.json`: cấu hình Azure Static Web Apps, không dùng khi chạy bằng Nginx.
 - `Dockerfile`: image Nginx Alpine cho Azure Container Apps.
 - `nginx.conf`: static hosting, fallback về `index.html`, `/healthz`, security headers.
 - `.dockerignore`: loại file không cần thiết khỏi Docker context.
-- `README.md`: ghi chú vận hành.
-
-## Hành vi frontend
-
-- Khi trang mở, website gọi API một lần.
-- Khi người dùng bấm `Kiểm tra lại`, website gọi lại các endpoint.
-- Không polling liên tục.
-- Nếu `/health` thành công, trạng thái hiển thị `Online` và service lấy từ JSON thật.
-- Nếu request lỗi, trạng thái hiển thị `Offline` hoặc thông báo endpoint cần xác thực; website không crash.
 
 ## Chạy bằng Docker
 
@@ -116,10 +60,4 @@ GET /healthz
 
 ## Azure Container Apps
 
-Container phục vụ static site bằng Nginx trên port `80`. Nginx không proxy backend; JavaScript trong trình duyệt gọi APIM trực tiếp:
-
-```text
-https://apim-neko-game-nhom2-2026.azure-api.net/neko
-```
-
-Nếu APIM chưa bật CORS cho domain của Container App, dashboard sẽ hiển thị lỗi kết nối thay vì crash.
+Container phục vụ static site bằng Nginx trên port `80`. Nginx không proxy backend; JavaScript trong trình duyệt gọi APIM trực tiếp.
