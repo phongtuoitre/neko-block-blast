@@ -7,7 +7,7 @@ import urllib.request
 
 API_BASE_URL = os.getenv(
     "NEKO_API_BASE_URL",
-    "https://neko-block-api-nhom2-bwc3eyd3hvgucgdt.southeastasia-01.azurewebsites.net",
+    "https://apim-neko-game-nhom2-2026.azure-api.net/neko",
 ).rstrip("/")
 TIMEOUT_SECONDS = 5
 
