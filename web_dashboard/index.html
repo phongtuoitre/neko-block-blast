@@ -6,7 +6,7 @@
     <title>Neko Block Blast Cloud Dashboard</title>
     <meta
       name="description"
-      content="Dashboard tinh cho Neko Block Blast, theo doi backend qua Azure API Management."
+      content="Dashboard tinh cho Neko Block Blast, theo doi backend FastAPI qua Azure API Management."
     >
     <link rel="stylesheet" href="styles.css">
     <script src="app.js" defer></script>
@@ -39,10 +39,11 @@
 
         <section class="hero" aria-labelledby="pageTitle">
           <div class="hero-copy">
-            <p class="section-kicker">Azure Cloud</p>
+            <p class="section-kicker">Azure Container Apps ready</p>
             <h1 id="pageTitle">Neko Block Blast Cloud Dashboard</h1>
             <p class="hero-summary">
-              Trạng thái backend, phiên bản triển khai và luồng cloud chính của dự án.
+              Dashboard tĩnh theo dõi FastAPI qua Azure API Management, không gửi
+              khóa truy cập hoặc thông tin xác thực nhúng sẵn.
             </p>
           </div>
 
@@ -50,12 +51,12 @@
             <div class="status-main">
               <span id="statusDot" class="status-dot state-checking" aria-hidden="true"></span>
               <div>
-                <span class="metric-label">Trạng thái Backend</span>
+                <span class="metric-label">Backend</span>
                 <strong id="backendStatus" class="status-text">Đang kiểm tra</strong>
               </div>
             </div>
             <p id="statusMessage" class="status-message">
-              Đang gọi health endpoint qua Azure API Management.
+              Đang gọi /health qua Azure API Management.
             </p>
             <p id="lastChecked" class="last-checked">Chưa kiểm tra</p>
           </div>
@@ -63,26 +64,99 @@
       </header>
 
       <main class="content">
-        <section class="metric-grid" aria-label="Thong tin backend">
+        <section class="metric-grid metric-grid-four" aria-label="Thong tin backend">
+          <article class="metric-card">
+            <span class="metric-label">Tên service</span>
+            <strong id="serviceValue" class="metric-value">Đang tải</strong>
+            <span class="metric-note">Từ JSON /health</span>
+          </article>
+
           <article class="metric-card">
             <span class="metric-label">Phiên bản backend</span>
             <strong id="versionValue" class="metric-value">Đang tải</strong>
-            <span id="versionNote" class="metric-note">/version</span>
+            <span id="versionNote" class="metric-note">Từ JSON /version</span>
           </article>
 
           <article class="metric-card">
-            <span class="metric-label">API Gateway đang sử dụng</span>
+            <span class="metric-label">Deploy source</span>
+            <strong id="deploySourceValue" class="metric-value">Đang tải</strong>
+            <span class="metric-note">Trường deploy_from</span>
+          </article>
+
+          <article class="metric-card">
+            <span class="metric-label">API Gateway</span>
             <strong class="metric-value metric-code" id="gatewayValue">
               https://apim-neko-game-nhom2-2026.azure-api.net/neko
             </strong>
-            <span class="metric-note">Không dùng subscription key</span>
+            <span class="metric-note">Không gửi APIM subscription key</span>
+          </article>
+        </section>
+
+        <section class="dashboard-section" aria-labelledby="leaderboardTitle">
+          <div class="section-heading section-heading-row">
+            <div>
+              <p class="section-kicker">Leaderboard</p>
+              <h2 id="leaderboardTitle">Bảng xếp hạng người chơi</h2>
+            </div>
+            <span id="leaderboardStatus" class="pill pill-checking">Đang tải</span>
+          </div>
+
+          <div class="table-shell">
+            <table class="data-table">
+              <caption id="leaderboardCaption">
+                Endpoint đã xác minh: GET /jobs/leaderboard-online.
+              </caption>
+              <thead>
+                <tr>
+                  <th scope="col">Hạng</th>
+                  <th scope="col">Người chơi</th>
+                  <th scope="col">Thắng</th>
+                  <th scope="col">Trận</th>
+                  <th scope="col">Tổng điểm</th>
+                </tr>
+              </thead>
+              <tbody id="leaderboardBody">
+                <tr>
+                  <td colspan="5" class="empty-cell">Đang tải bảng xếp hạng...</td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+        </section>
+
+        <section class="summary-grid" aria-label="Diem va thanh tich">
+          <article class="metric-card">
+            <span class="metric-label">Điểm cao nhất hiện có</span>
+            <strong id="topScoreValue" class="metric-value">Đang tải</strong>
+            <span class="metric-note">Từ total_score trong leaderboard</span>
           </article>
 
           <article class="metric-card">
-            <span class="metric-label">Service từ Health JSON</span>
-            <strong id="serviceValue" class="metric-value">Đang tải</strong>
-            <span class="metric-note">/health</span>
+            <span class="metric-label">Số trận cao nhất</span>
+            <strong id="topMatchesValue" class="metric-value">Đang tải</strong>
+            <span class="metric-note">Từ matches trong leaderboard</span>
           </article>
+
+          <article class="metric-card">
+            <span class="metric-label">Số trận thắng cao nhất</span>
+            <strong id="topWinsValue" class="metric-value">Đang tải</strong>
+            <span class="metric-note">Từ wins trong leaderboard</span>
+          </article>
+        </section>
+
+        <section class="dashboard-section" aria-labelledby="recentTitle">
+          <div class="section-heading">
+            <p class="section-kicker">Recent matches</p>
+            <h2 id="recentTitle">Trận gần đây</h2>
+          </div>
+          <div class="notice notice-neutral">
+            <strong>Chưa có API công khai cho danh sách trận gần đây.</strong>
+            <span>
+              Backend hiện có GET /matches/{match_id} và GET /rooms/{room_code}/active-match,
+              cả hai đều cần xác thực người dùng và thông tin trận hoặc phòng. Dashboard
+              không nhúng thông tin xác thực nên không gọi các endpoint này.
+            </span>
+          </div>
         </section>
 
         <section class="dashboard-section" aria-labelledby="flowTitle">
@@ -99,19 +173,19 @@
             <div class="flow-node">
               <span>01</span>
               <strong>Website</strong>
-              <small>Static dashboard</small>
+              <small>Nginx static site</small>
             </div>
             <div class="flow-arrow" aria-hidden="true">&rarr;</div>
             <div class="flow-node">
               <span>02</span>
               <strong>API Management</strong>
-              <small>Gateway /neko</small>
+              <small>/neko gateway</small>
             </div>
             <div class="flow-arrow" aria-hidden="true">&rarr;</div>
             <div class="flow-node">
               <span>03</span>
               <strong>App Service</strong>
-              <small>Backend API</small>
+              <small>FastAPI backend</small>
             </div>
             <div class="flow-arrow" aria-hidden="true">&rarr;</div>
             <div class="flow-node">
@@ -131,38 +205,38 @@
 
             <ul class="service-list">
               <li>
-                <span class="service-swatch swatch-static" aria-hidden="true"></span>
+                <span class="service-swatch swatch-container" aria-hidden="true"></span>
                 <div>
-                  <strong>Azure Static Web Apps</strong>
-                  <span>Host dashboard tĩnh.</span>
+                  <strong>Azure Container Apps</strong>
+                  <span>Chạy container Nginx phục vụ dashboard tĩnh.</span>
                 </div>
               </li>
               <li>
                 <span class="service-swatch swatch-apim" aria-hidden="true"></span>
                 <div>
                   <strong>Azure API Management</strong>
-                  <span>Gateway công khai cho /neko/health và /neko/version.</span>
+                  <span>Gateway public: https://apim-neko-game-nhom2-2026.azure-api.net/neko.</span>
                 </div>
               </li>
               <li>
                 <span class="service-swatch swatch-app" aria-hidden="true"></span>
                 <div>
                   <strong>Azure App Service</strong>
-                  <span>Chạy backend API của game.</span>
+                  <span>Chạy FastAPI backend hiện có.</span>
                 </div>
               </li>
               <li>
                 <span class="service-swatch swatch-db" aria-hidden="true"></span>
                 <div>
                   <strong>Azure Database for PostgreSQL</strong>
-                  <span>Lưu dữ liệu backend.</span>
+                  <span>Lưu user, phòng, trận và điểm.</span>
                 </div>
               </li>
               <li>
                 <span class="service-swatch swatch-blob" aria-hidden="true"></span>
                 <div>
                   <strong>Azure Blob Storage</strong>
-                  <span>Lưu file NekoBlockBlast.exe.</span>
+                  <span>Lưu file NekoBlockBlast.exe và match result blob.</span>
                 </div>
               </li>
             </ul>
@@ -170,11 +244,58 @@
 
           <article class="dashboard-section payload-section">
             <div class="section-heading">
-              <p class="section-kicker">Health payload</p>
+              <p class="section-kicker">API payload</p>
               <h2>Dữ liệu nhận được</h2>
             </div>
-            <pre id="healthPayload" class="payload-box">{}</pre>
+            <pre id="apiPayload" class="payload-box">{}</pre>
           </article>
+        </section>
+
+        <section class="dashboard-section" aria-labelledby="endpointTitle">
+          <div class="section-heading">
+            <p class="section-kicker">Verified backend API</p>
+            <h2 id="endpointTitle">Endpoint đã tìm thấy trong FastAPI</h2>
+          </div>
+          <div class="table-shell">
+            <table class="data-table endpoint-table">
+              <thead>
+                <tr>
+                  <th scope="col">Endpoint</th>
+                  <th scope="col">Xác thực</th>
+                  <th scope="col">JSON response thật</th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr>
+                  <td><code>GET /health</code></td>
+                  <td>Public</td>
+                  <td><code>{"status":"ok","service":"neko-block-blast-api"}</code></td>
+                </tr>
+                <tr>
+                  <td><code>GET /version</code></td>
+                  <td>Public</td>
+                  <td><code>{"deploy_from":"github-actions","version":"ci-cd-test-01"}</code></td>
+                </tr>
+                <tr>
+                  <td><code>GET /jobs/leaderboard-online</code></td>
+                  <td>Cần <code>X-Job-Key</code></td>
+                  <td>
+                    <code>{"leaderboard":[{"user_id":1,"username":"...","display_name":"...","wins":0,"matches":0,"total_score":0}]}</code>
+                  </td>
+                </tr>
+                <tr>
+                  <td><code>GET /matches/{match_id}</code></td>
+                  <td>Cần xác thực người dùng và user thuộc trận</td>
+                  <td><code>MatchRead</code>: match_id, room_code, mode, status, remaining_seconds, winner_user_id, winner_team, players, event_blob_uploaded, event_blob_path</td>
+                </tr>
+                <tr>
+                  <td><code>GET /rooms/{room_code}/active-match</code></td>
+                  <td>Cần xác thực người dùng và user thuộc phòng</td>
+                  <td><code>MatchRead</code></td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
         </section>
       </main>
     </div>

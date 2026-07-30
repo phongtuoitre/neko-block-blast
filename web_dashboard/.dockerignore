@@ -1,0 +1,11 @@
+.git
+.gitignore
+.DS_Store
+Thumbs.db
+*.log
+node_modules
+dist
+build
+.env
+.env.*
+README.md
