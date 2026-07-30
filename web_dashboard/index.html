@@ -1,0 +1,182 @@
+<!doctype html>
+<html lang="vi">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Neko Block Blast Cloud Dashboard</title>
+    <meta
+      name="description"
+      content="Dashboard tinh cho Neko Block Blast, theo doi backend qua Azure API Management."
+    >
+    <link rel="stylesheet" href="styles.css">
+    <script src="app.js" defer></script>
+  </head>
+  <body data-backend-status="checking">
+    <div class="dashboard-shell">
+      <header class="masthead">
+        <nav class="topbar" aria-label="Thanh dieu huong dashboard">
+          <a class="brand" href="/" aria-label="Neko Block Blast Cloud Dashboard">
+            <span class="brand-mark" aria-hidden="true"></span>
+            <span class="brand-text">
+              <span>Neko Block Blast</span>
+              <strong>Cloud Dashboard</strong>
+            </span>
+          </a>
+          <div class="topbar-actions">
+            <a
+              id="downloadLink"
+              class="button button-secondary"
+              href="https://nekoblockblastnhom2.blob.core.windows.net/game-demo/NekoBlockBlast.exe"
+              rel="noopener noreferrer"
+            >
+              Tải NekoBlockBlast.exe
+            </a>
+            <button id="refreshButton" class="button button-primary" type="button">
+              Kiểm tra lại
+            </button>
+          </div>
+        </nav>
+
+        <section class="hero" aria-labelledby="pageTitle">
+          <div class="hero-copy">
+            <p class="section-kicker">Azure Cloud</p>
+            <h1 id="pageTitle">Neko Block Blast Cloud Dashboard</h1>
+            <p class="hero-summary">
+              Trạng thái backend, phiên bản triển khai và luồng cloud chính của dự án.
+            </p>
+          </div>
+
+          <div class="status-panel" aria-live="polite">
+            <div class="status-main">
+              <span id="statusDot" class="status-dot state-checking" aria-hidden="true"></span>
+              <div>
+                <span class="metric-label">Trạng thái Backend</span>
+                <strong id="backendStatus" class="status-text">Đang kiểm tra</strong>
+              </div>
+            </div>
+            <p id="statusMessage" class="status-message">
+              Đang gọi health endpoint qua Azure API Management.
+            </p>
+            <p id="lastChecked" class="last-checked">Chưa kiểm tra</p>
+          </div>
+        </section>
+      </header>
+
+      <main class="content">
+        <section class="metric-grid" aria-label="Thong tin backend">
+          <article class="metric-card">
+            <span class="metric-label">Phiên bản backend</span>
+            <strong id="versionValue" class="metric-value">Đang tải</strong>
+            <span id="versionNote" class="metric-note">/version</span>
+          </article>
+
+          <article class="metric-card">
+            <span class="metric-label">API Gateway đang sử dụng</span>
+            <strong class="metric-value metric-code" id="gatewayValue">
+              https://apim-neko-game-nhom2-2026.azure-api.net/neko
+            </strong>
+            <span class="metric-note">Không dùng subscription key</span>
+          </article>
+
+          <article class="metric-card">
+            <span class="metric-label">Service từ Health JSON</span>
+            <strong id="serviceValue" class="metric-value">Đang tải</strong>
+            <span class="metric-note">/health</span>
+          </article>
+        </section>
+
+        <section class="dashboard-section" aria-labelledby="flowTitle">
+          <div class="section-heading">
+            <p class="section-kicker">Cloud flow</p>
+            <h2 id="flowTitle">Website &rarr; API Management &rarr; App Service &rarr; PostgreSQL</h2>
+          </div>
+
+          <div
+            class="flow-diagram"
+            role="img"
+            aria-label="Website den API Management den App Service den PostgreSQL"
+          >
+            <div class="flow-node">
+              <span>01</span>
+              <strong>Website</strong>
+              <small>Static dashboard</small>
+            </div>
+            <div class="flow-arrow" aria-hidden="true">&rarr;</div>
+            <div class="flow-node">
+              <span>02</span>
+              <strong>API Management</strong>
+              <small>Gateway /neko</small>
+            </div>
+            <div class="flow-arrow" aria-hidden="true">&rarr;</div>
+            <div class="flow-node">
+              <span>03</span>
+              <strong>App Service</strong>
+              <small>Backend API</small>
+            </div>
+            <div class="flow-arrow" aria-hidden="true">&rarr;</div>
+            <div class="flow-node">
+              <span>04</span>
+              <strong>PostgreSQL</strong>
+              <small>Game data</small>
+            </div>
+          </div>
+        </section>
+
+        <section class="dashboard-layout">
+          <article class="dashboard-section">
+            <div class="section-heading">
+              <p class="section-kicker">Cloud services</p>
+              <h2>Dịch vụ cloud chính</h2>
+            </div>
+
+            <ul class="service-list">
+              <li>
+                <span class="service-swatch swatch-static" aria-hidden="true"></span>
+                <div>
+                  <strong>Azure Static Web Apps</strong>
+                  <span>Host dashboard tĩnh.</span>
+                </div>
+              </li>
+              <li>
+                <span class="service-swatch swatch-apim" aria-hidden="true"></span>
+                <div>
+                  <strong>Azure API Management</strong>
+                  <span>Gateway công khai cho /neko/health và /neko/version.</span>
+                </div>
+              </li>
+              <li>
+                <span class="service-swatch swatch-app" aria-hidden="true"></span>
+                <div>
+                  <strong>Azure App Service</strong>
+                  <span>Chạy backend API của game.</span>
+                </div>
+              </li>
+              <li>
+                <span class="service-swatch swatch-db" aria-hidden="true"></span>
+                <div>
+                  <strong>Azure Database for PostgreSQL</strong>
+                  <span>Lưu dữ liệu backend.</span>
+                </div>
+              </li>
+              <li>
+                <span class="service-swatch swatch-blob" aria-hidden="true"></span>
+                <div>
+                  <strong>Azure Blob Storage</strong>
+                  <span>Lưu file NekoBlockBlast.exe.</span>
+                </div>
+              </li>
+            </ul>
+          </article>
+
+          <article class="dashboard-section payload-section">
+            <div class="section-heading">
+              <p class="section-kicker">Health payload</p>
+              <h2>Dữ liệu nhận được</h2>
+            </div>
+            <pre id="healthPayload" class="payload-box">{}</pre>
+          </article>
+        </section>
+      </main>
+    </div>
+  </body>
+</html>
