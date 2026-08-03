@@ -1,0 +1,234 @@
+name: Dashboard Blue-Green CI/CD
+
+on:
+  push:
+    branches: [feature/dashboard-cicd]
+    paths:
+      - 'web_dashboard/**'
+      - '.github/workflows/deploy-dashboard-cicd.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  id-token: write
+
+concurrency:
+  group: neko-dashboard-cicd
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    env:
+      RG: ${{ vars.DASHBOARD_RESOURCE_GROUP }}
+      APP: ${{ vars.DASHBOARD_CONTAINER_APP }}
+      ACR_NAME: ${{ vars.DASHBOARD_ACR_NAME }}
+      ACR_SERVER: ${{ vars.DASHBOARD_ACR_LOGIN_SERVER }}
+      IMAGE_REPOSITORY: ${{ vars.DASHBOARD_IMAGE_REPOSITORY }}
+
+    steps:
+      - name: Checkout source
+        uses: actions/checkout@v4
+
+      - name: Validate source
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -f web_dashboard/Dockerfile
+          test -f web_dashboard/index.html
+          test -f web_dashboard/styles.css
+          test -f web_dashboard/app.js
+          test -f web_dashboard/nginx.conf
+          echo 'Dashboard source validation: PASS'
+
+      - name: Prepare image and revision names
+        shell: bash
+        run: |
+          set -euo pipefail
+          IMAGE="${ACR_SERVER}/${IMAGE_REPOSITORY}:${GITHUB_SHA}"
+          SHORT_SHA="${GITHUB_SHA:0:7}"
+          REVISION_SUFFIX="r${GITHUB_RUN_NUMBER}a${GITHUB_RUN_ATTEMPT}-${SHORT_SHA}"
+          echo "IMAGE=$IMAGE" >> "$GITHUB_ENV"
+          echo "REVISION_SUFFIX=$REVISION_SUFFIX" >> "$GITHUB_ENV"
+          echo "Image: $IMAGE"
+          echo "Revision suffix: $REVISION_SUFFIX"
+
+      - name: Build image
+        shell: bash
+        run: |
+          set -euo pipefail
+          docker build --pull --tag "$IMAGE" web_dashboard
+
+      - name: Local smoke test
+        shell: bash
+        run: |
+          set -euo pipefail
+          NAME='neko-dashboard-smoke'
+          cleanup() {
+            docker logs "$NAME" 2>/dev/null || true
+            docker rm -f "$NAME" 2>/dev/null || true
+          }
+          trap cleanup EXIT
+          docker run -d --name "$NAME" -p 8080:80 "$IMAGE"
+
+          smoke() {
+            local url="$1"
+            local label="$2"
+            for attempt in $(seq 1 12); do
+              code=$(curl -L -s -o /tmp/response.txt -w '%{http_code}' \
+                --connect-timeout 5 --max-time 15 "$url" || true)
+              echo "$label attempt $attempt: HTTP $code"
+              [ "$code" = '200' ] && return 0
+              sleep 5
+            done
+            cat /tmp/response.txt 2>/dev/null || true
+            return 1
+          }
+
+          smoke 'http://127.0.0.1:8080/healthz' 'Local /healthz'
+          smoke 'http://127.0.0.1:8080/' 'Local homepage'
+
+      - name: Azure login with OIDC
+        uses: azure/login@v2
+        with:
+          client-id: ${{ secrets.AZURE_DASHBOARD_CLIENT_ID }}
+          tenant-id: ${{ secrets.AZURE_DASHBOARD_TENANT_ID }}
+          subscription-id: ${{ secrets.AZURE_DASHBOARD_SUBSCRIPTION_ID }}
+
+      - name: Prepare Azure CLI
+        shell: bash
+        run: |
+          set -euo pipefail
+          az extension add --name containerapp --upgrade --yes --only-show-errors
+          az account show --query '{Subscription:name,SubscriptionId:id,TenantId:tenantId}' -o table
+
+      - name: Push image to ACR
+        shell: bash
+        run: |
+          set -euo pipefail
+          az acr login --name "$ACR_NAME" --only-show-errors
+          docker push "$IMAGE"
+
+      - name: Deploy candidate, smoke test, promote or rollback
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+
+          CANDIDATE_REVISION="${APP}--${REVISION_SUFFIX}"
+          STABLE_REVISION=''
+
+          rollback() {
+            rc=$?
+            echo '=== ROLLBACK ==='
+            if [ -n "${STABLE_REVISION:-}" ]; then
+              if az containerapp revision show -n "$APP" -g "$RG" \
+                --revision "$CANDIDATE_REVISION" -o none 2>/dev/null; then
+                az containerapp ingress traffic set -n "$APP" -g "$RG" \
+                  --revision-weight "$STABLE_REVISION=100" "$CANDIDATE_REVISION=0" \
+                  -o none || true
+                az containerapp revision deactivate -n "$APP" -g "$RG" \
+                  --revision "$CANDIDATE_REVISION" -o none || true
+              else
+                az containerapp ingress traffic set -n "$APP" -g "$RG" \
+                  --revision-weight "$STABLE_REVISION=100" -o none || true
+              fi
+            fi
+            echo 'ROLLBACK HOÀN THÀNH'
+            exit "$rc"
+          }
+          trap rollback ERR
+
+          STABLE_REVISION=$(az containerapp ingress traffic show -n "$APP" -g "$RG" \
+            --query '[?weight==`100` && revisionName!=null].revisionName | [0]' -o tsv)
+
+          if [ -z "$STABLE_REVISION" ]; then
+            STABLE_REVISION=$(az containerapp show -n "$APP" -g "$RG" \
+              --query properties.latestReadyRevisionName -o tsv)
+          fi
+
+          test -n "$STABLE_REVISION"
+          echo "Stable: $STABLE_REVISION"
+          echo "Candidate: $CANDIDATE_REVISION"
+
+          az containerapp revision copy -n "$APP" -g "$RG" \
+            --from-revision "$STABLE_REVISION" \
+            --image "$IMAGE" \
+            --revision-suffix "$REVISION_SUFFIX" \
+            -o none
+
+          az containerapp ingress traffic set -n "$APP" -g "$RG" \
+            --revision-weight "$STABLE_REVISION=100" "$CANDIDATE_REVISION=0" \
+            -o none
+
+          ready=false
+          for attempt in $(seq 1 36); do
+            state=$(az containerapp revision show -n "$APP" -g "$RG" \
+              --revision "$CANDIDATE_REVISION" \
+              --query properties.provisioningState -o tsv 2>/dev/null || true)
+            health=$(az containerapp revision show -n "$APP" -g "$RG" \
+              --revision "$CANDIDATE_REVISION" \
+              --query properties.healthState -o tsv 2>/dev/null || true)
+            echo "Attempt $attempt: Provisioning=$state Health=$health"
+            [ "$state" = 'Failed' ] && exit 1
+            if [ "$state" = 'Provisioned' ]; then
+              ready=true
+              break
+            fi
+            sleep 10
+          done
+          [ "$ready" = 'true' ]
+
+          CANDIDATE_FQDN=$(az containerapp revision show -n "$APP" -g "$RG" \
+            --revision "$CANDIDATE_REVISION" --query properties.fqdn -o tsv)
+          test -n "$CANDIDATE_FQDN"
+          echo "Candidate URL: https://$CANDIDATE_FQDN"
+
+          smoke() {
+            local url="$1"
+            local label="$2"
+            for attempt in $(seq 1 18); do
+              code=$(curl -L -s -o /tmp/response.txt -w '%{http_code}' \
+                --connect-timeout 10 --max-time 30 "$url" || true)
+              echo "$label attempt $attempt: HTTP $code"
+              [ "$code" = '200' ] && return 0
+              sleep 10
+            done
+            cat /tmp/response.txt 2>/dev/null || true
+            return 1
+          }
+
+          smoke "https://$CANDIDATE_FQDN/healthz" 'Candidate /healthz'
+          smoke "https://$CANDIDATE_FQDN/" 'Candidate homepage'
+
+          az containerapp ingress traffic set -n "$APP" -g "$RG" \
+            --revision-weight "$STABLE_REVISION=0" "$CANDIDATE_REVISION=100" \
+            -o none
+
+          PROD_FQDN=$(az containerapp show -n "$APP" -g "$RG" \
+            --query properties.configuration.ingress.fqdn -o tsv)
+
+          smoke "https://$PROD_FQDN/healthz" 'Production /healthz'
+          smoke "https://$PROD_FQDN/" 'Production homepage'
+
+          az containerapp ingress traffic show -n "$APP" -g "$RG" -o table
+          az containerapp revision list -n "$APP" -g "$RG" --all \
+            --query '[].{Revision:name,Active:properties.active,Health:properties.healthState,Provisioning:properties.provisioningState,Image:properties.template.containers[0].image}' \
+            -o table
+
+          {
+            echo '## Neko Dashboard CI/CD'
+            echo "- Image: \`$IMAGE\`"
+            echo "- Stable cũ: \`$STABLE_REVISION\`"
+            echo "- Revision mới: \`$CANDIDATE_REVISION\`"
+            echo "- Candidate URL: https://$CANDIDATE_FQDN"
+            echo "- Production URL: https://$PROD_FQDN"
+            echo '- Local smoke test: PASS'
+            echo '- Candidate smoke test: PASS'
+            echo '- Production smoke test: PASS'
+            echo '- Traffic: 100% revision mới'
+          } >> "$GITHUB_STEP_SUMMARY"
+
+          trap - ERR
+          echo 'DEPLOYMENT THÀNH CÔNG'
