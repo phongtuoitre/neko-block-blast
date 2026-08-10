@@ -1028,7 +1028,7 @@ class Game:
         self.happy_popup = HappyCatPopup()
         self.load_sounds()
         self.reset_game()
-        self.neko_ai = NekoAIGuide(self)
+        self.neko_ai = None if self.online_mode else NekoAIGuide(self)
 
     # --- CÁC HÀM XỬ LÝ LEADERBOARD ---
     def load_leaderboard(self):
@@ -1236,7 +1236,7 @@ class Game:
 
     def request_exit(self):
         self.stop_match_audio()
-        if hasattr(self, "neko_ai"):
+        if getattr(self, "neko_ai", None):
             self.neko_ai.shutdown()
         if self.online_poll_executor:
             self.online_poll_executor.shutdown(wait=False, cancel_futures=True)
@@ -1293,7 +1293,11 @@ class Game:
                 continue
 
             # NẾU ĐANG TRONG TRẬN GAME (VÀ ĐÃ GAME OVER)
-            if self.state == STATE_PLAY and self.neko_ai.handle_event(event):
+            if (
+                self.state == STATE_PLAY
+                and self.neko_ai
+                and self.neko_ai.handle_event(event)
+            ):
                 continue
 
             if self.state == STATE_PLAY and self.game_over:
@@ -1782,7 +1786,8 @@ class Game:
             elif self.state == STATE_PLAY:
                 self.cat_surprise.update()
                 self.happy_popup.update()
-                self.neko_ai.update()
+                if self.neko_ai:
+                    self.neko_ai.update()
 
                 self.screen.fill(PASTEL_BG)
                 self.draw_grid()
@@ -1801,7 +1806,8 @@ class Game:
                     self.happy_popup.draw(self.screen)
                 if self.online_mode:
                     self.draw_online_overlay()
-                self.neko_ai.draw(self.screen)
+                if self.neko_ai:
+                    self.neko_ai.draw(self.screen)
 
             pygame.display.flip()
             self.clock.tick(FPS)
