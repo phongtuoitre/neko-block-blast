@@ -29,6 +29,10 @@ SMTP_USERNAME=<gmail-gửi-mail>
 SMTP_PASSWORD=<google-app-password-16-ký-tự>
 EMAIL_FROM=<gmail-gửi-mail>
 EMAIL_FROM_NAME=Neko Block Blast
+AZURE_OPENAI_ENDPOINT=<azure-openai-endpoint>
+AZURE_OPENAI_API_KEY=<azure-openai-api-key>
+AZURE_OPENAI_DEPLOYMENT=<deployment-name-da-tao-tren-Azure>
+AZURE_OPENAI_API_VERSION=2024-10-21
 ```
 
 Startup command:
@@ -38,3 +42,6 @@ gunicorn -w 2 -k uvicorn.workers.UvicornWorker server.main:app
 ```
 
 Client dùng biến môi trường `NEKO_API_BASE_URL` để trỏ đến URL App Service.
+
+Neko AI Guide dùng `POST /api/ai-guide/chat`. Nếu chưa cấu hình Azure OpenAI
+hoặc Azure tạm thời lỗi, API vẫn trả về hướng dẫn cơ bản không cần secret.

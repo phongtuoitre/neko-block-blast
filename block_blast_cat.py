@@ -4,6 +4,7 @@ import sys
 import json
 import os
 import argparse
+import math
 import urllib.error
 import urllib.request
 from concurrent.futures import ThreadPoolExecutor
@@ -100,6 +101,48 @@ font_online_label = load_vietnamese_font(12)
 font_online_value = load_vietnamese_font(14)
 font_online_overlay_title = load_vietnamese_font(32)
 font_online_overlay_text = load_vietnamese_font(20)
+font_neko_title = load_vietnamese_font(18)
+font_neko_text = load_vietnamese_font(14)
+font_neko_tiny = load_vietnamese_font(12)
+font_neko_button = load_vietnamese_font(13)
+
+NEKO_AI_STATE_DIR = os.path.join(
+    os.getenv("APPDATA") or os.path.expanduser("~"),
+    "NekoBlockBlast",
+)
+NEKO_AI_STATE_PATH = os.path.join(NEKO_AI_STATE_DIR, "neko_ai_state.json")
+NEKO_AI_MAX_QUESTION_LENGTH = 360
+
+NEKO_QUICK_QUESTIONS = [
+    "Hướng dẫn cách chơi",
+    "Mẹo cho người mới",
+    "Làm sao để được nhiều điểm?",
+    "Phân tích bàn chơi hiện tại",
+    "Tôi nên đặt khối ở đâu?",
+]
+
+NEKO_TUTORIAL_STEPS = [
+    (
+        "Chọn và đặt khối",
+        "Chọn một khối mèo ở bảng bên phải, kéo vào vùng ô trống trên bàn chơi.",
+    ),
+    (
+        "Hoàn thành hàng hoặc cột",
+        "Khi một hàng hoặc cột được lấp đầy, các ô đó sẽ biến mất để mở thêm chỗ.",
+    ),
+    (
+        "Điểm và combo",
+        "Mỗi ô đặt xuống có điểm. Xóa nhiều hàng/cột cùng lúc sẽ được thưởng thêm.",
+    ),
+    (
+        "Khi trò chơi kết thúc",
+        "Nếu tất cả khối hiện có đều không còn vị trí đặt hợp lệ, ván chơi kết thúc.",
+    ),
+    (
+        "Mẹo cho người mới",
+        "Giữ trung tâm bàn thoáng, đặt khối lớn trước và đừng tạo quá nhiều lỗ nhỏ.",
+    ),
+]
 
 
 # ================= LỚP HIỆU ỨNG VÀ MÈO (Giữ nguyên) =================
@@ -369,6 +412,562 @@ class Block:
 
 
 # ================= LỚP GAME CHÍNH =================
+def render_fit(text, color, max_width, start_size=13, min_size=10):
+    for size in range(start_size, min_size - 1, -1):
+        font = load_vietnamese_font(size)
+        surface = font.render(text, True, color)
+        if surface.get_width() <= max_width or size == min_size:
+            return surface
+    return font_neko_button.render(text, True, color)
+
+
+def wrap_text(text, font, max_width):
+    lines = []
+    for raw_line in str(text).splitlines() or [""]:
+        words = raw_line.split(" ")
+        line = ""
+        for word in words:
+            candidate = word if not line else f"{line} {word}"
+            if font.size(candidate)[0] <= max_width:
+                line = candidate
+                continue
+            if line:
+                lines.append(line)
+                line = word
+            else:
+                clipped = word
+                while font.size(clipped)[0] > max_width and len(clipped) > 4:
+                    clipped = clipped[:-1]
+                lines.append(f"{clipped}..." if clipped != word else word)
+                line = ""
+        if line:
+            lines.append(line)
+    return lines
+
+
+class NekoButton:
+    def __init__(self, button_id, label, rect, accessibility_label=None):
+        self.button_id = button_id
+        self.label = label
+        self.rect = pygame.Rect(rect)
+        self.accessibility_label = accessibility_label or label
+
+    def draw(self, surface, mouse_pos, enabled=True):
+        hovered = enabled and self.rect.collidepoint(mouse_pos)
+        fill = (255, 255, 255) if hovered else (255, 245, 238)
+        border = PASTEL_ACCENT_DARK if hovered else (255, 182, 193)
+        text_color = PASTEL_TEXT if enabled else (170, 155, 145)
+        if not enabled:
+            fill = (242, 234, 228)
+            border = (220, 205, 195)
+
+        pygame.draw.rect(surface, fill, self.rect, border_radius=8)
+        pygame.draw.rect(surface, border, self.rect, 2, border_radius=8)
+        label = render_fit(self.label, text_color, self.rect.width - 12)
+        surface.blit(label, label.get_rect(center=self.rect.center))
+
+    def clicked(self, event, enabled=True):
+        return (
+            enabled
+            and event.type == pygame.MOUSEBUTTONDOWN
+            and event.button == 1
+            and self.rect.collidepoint(event.pos)
+        )
+
+
+class NekoAIGuide:
+    def __init__(self, game):
+        self.game = game
+        self.visible = False
+        self.tutorial_active = False
+        self.tutorial_step = 0
+        self.input_text = ""
+        self.input_active = False
+        self.is_loading = False
+        self.error_message = ""
+        self.request_future = None
+        self.pending_question = ""
+        self.messages = []
+        self.executor = ThreadPoolExecutor(max_workers=1)
+        self.auto_prompted = False
+        self.cat_accessibility_label = "Mở Neko AI, trợ lý trong game"
+        self.state_data = self.load_state()
+        self.tutorial_seen = bool(self.state_data.get("tutorial_seen"))
+
+        self.cat_rect = pygame.Rect(0, 0, 64, 64)
+        self.panel_rect = pygame.Rect(0, 0, 310, 390)
+        self.close_button = None
+        self.send_button = None
+        self.input_rect = pygame.Rect(0, 0, 1, 1)
+        self.quick_buttons = []
+        self.tutorial_buttons = []
+
+    def load_state(self):
+        try:
+            with open(NEKO_AI_STATE_PATH, "r", encoding="utf-8") as file:
+                data = json.load(file)
+            return data if isinstance(data, dict) else {}
+        except (OSError, json.JSONDecodeError):
+            return {}
+
+    def save_state(self):
+        try:
+            os.makedirs(NEKO_AI_STATE_DIR, exist_ok=True)
+            with open(NEKO_AI_STATE_PATH, "w", encoding="utf-8") as file:
+                json.dump(self.state_data, file, ensure_ascii=False, indent=2)
+        except OSError:
+            pass
+
+    def mark_tutorial_seen(self):
+        self.tutorial_seen = True
+        self.state_data["tutorial_seen"] = True
+        self.save_state()
+
+    def shutdown(self):
+        self.executor.shutdown(wait=False, cancel_futures=True)
+
+    def ensure_intro(self):
+        if self.auto_prompted or self.game.state != STATE_PLAY:
+            return
+        self.auto_prompted = True
+        if not self.tutorial_seen:
+            self.visible = True
+            self.tutorial_active = True
+            self.add_message(
+                "assistant",
+                "Meo meo! Mình là Neko AI. Mình sẽ chỉ nhanh cách chơi nhé.",
+            )
+
+    def add_message(self, role, content):
+        clean_content = str(content).strip()
+        if not clean_content:
+            return
+        self.messages.append({"role": role, "content": clean_content[:1200]})
+        self.messages = self.messages[-12:]
+
+    def calculate_layout(self):
+        cat_size = 64
+        right_rect = pygame.Rect(WIDTH - cat_size - 16, HEIGHT - cat_size - 14, cat_size, cat_size)
+        important_panel = pygame.Rect(PANEL_X - 8, 118, PANEL_WIDTH + 10, HEIGHT - 120)
+        if right_rect.colliderect(important_panel):
+            self.cat_rect = pygame.Rect(18, HEIGHT - cat_size - 14, cat_size, cat_size)
+        else:
+            self.cat_rect = right_rect
+
+        panel_width = min(310, WIDTH - 32)
+        panel_height = min(450, HEIGHT - 96)
+        board_right = GRID_OFFSET_X + GRID_SIZE * (CELL_SIZE + PADDING) - PADDING
+        panel_x = max(board_right + 2, WIDTH - panel_width - 16)
+        panel_y = max(90, HEIGHT - panel_height - 64)
+        self.panel_rect = pygame.Rect(panel_x, panel_y, panel_width, panel_height)
+        self.close_button = NekoButton(
+            "close",
+            "X",
+            pygame.Rect(self.panel_rect.right - 36, self.panel_rect.y + 10, 26, 26),
+            "Thu nhỏ bảng trò chuyện Neko AI",
+        )
+
+    def draw_cat_icon(self, surface):
+        self.calculate_layout()
+        rect = self.cat_rect
+        ticks = pygame.time.get_ticks()
+        bob = int(math.sin(ticks / 280) * 3)
+        blink = ticks % 2600 > 2440
+        cx = rect.centerx
+        cy = rect.centery + bob
+
+        if self.visible:
+            glow = pygame.Surface((rect.width + 18, rect.height + 18), pygame.SRCALPHA)
+            pygame.draw.ellipse(glow, (255, 200, 220, 110), glow.get_rect())
+            surface.blit(glow, (rect.x - 9, rect.y - 9 + bob))
+
+        tail_points = [
+            (cx + 22, cy + 12),
+            (cx + 34, cy + 4),
+            (cx + 31, cy - 7),
+            (cx + 22, cy - 2),
+        ]
+        pygame.draw.lines(surface, (245, 178, 185), False, tail_points, 8)
+        pygame.draw.circle(surface, (255, 222, 205), (cx, cy + 8), 25)
+        pygame.draw.polygon(surface, (255, 222, 205), [(cx - 23, cy - 10), (cx - 15, cy - 32), (cx - 4, cy - 13)])
+        pygame.draw.polygon(surface, (255, 222, 205), [(cx + 23, cy - 10), (cx + 15, cy - 32), (cx + 4, cy - 13)])
+        pygame.draw.polygon(surface, (245, 178, 185), [(cx - 18, cy - 13), (cx - 14, cy - 25), (cx - 7, cy - 13)])
+        pygame.draw.polygon(surface, (245, 178, 185), [(cx + 18, cy - 13), (cx + 14, cy - 25), (cx + 7, cy - 13)])
+        pygame.draw.circle(surface, (255, 182, 193), (cx - 14, cy + 10), 4)
+        pygame.draw.circle(surface, (255, 182, 193), (cx + 14, cy + 10), 4)
+        if blink:
+            pygame.draw.line(surface, PASTEL_TEXT, (cx - 14, cy - 1), (cx - 6, cy - 1), 2)
+            pygame.draw.line(surface, PASTEL_TEXT, (cx + 6, cy - 1), (cx + 14, cy - 1), 2)
+        else:
+            pygame.draw.circle(surface, PASTEL_TEXT, (cx - 10, cy - 2), 3)
+            pygame.draw.circle(surface, PASTEL_TEXT, (cx + 10, cy - 2), 3)
+        pygame.draw.line(surface, PASTEL_TEXT, (cx - 3, cy + 6), (cx, cy + 9), 2)
+        pygame.draw.line(surface, PASTEL_TEXT, (cx + 3, cy + 6), (cx, cy + 9), 2)
+        paw_y = cy + 20 + int(math.sin(ticks / 180) * 2)
+        pygame.draw.circle(surface, (255, 222, 205), (cx + 20, paw_y), 7)
+        pygame.draw.arc(surface, PASTEL_ACCENT_DARK, pygame.Rect(cx - 20, cy + 5, 40, 20), 0, math.pi, 2)
+
+    def draw_panel(self, surface):
+        if not self.visible:
+            return
+
+        mouse_pos = pygame.mouse.get_pos()
+        rect = self.panel_rect
+        shadow = pygame.Surface((rect.width, rect.height), pygame.SRCALPHA)
+        shadow.fill((140, 100, 90, 38))
+        surface.blit(shadow, (rect.x + 4, rect.y + 5))
+        pygame.draw.rect(surface, (255, 250, 245), rect, border_radius=8)
+        pygame.draw.rect(surface, (235, 180, 170), rect, 2, border_radius=8)
+
+        title = font_neko_title.render("Neko AI – Trợ lý của bạn", True, PASTEL_TEXT)
+        surface.blit(title, (rect.x + 14, rect.y + 13))
+        self.close_button.draw(surface, mouse_pos)
+
+        if self.tutorial_active:
+            self.draw_tutorial(surface)
+        else:
+            self.draw_chat(surface)
+
+    def draw_tutorial(self, surface):
+        rect = self.panel_rect
+        content_rect = pygame.Rect(rect.x + 16, rect.y + 54, rect.width - 32, rect.height - 112)
+        pygame.draw.rect(surface, (255, 255, 255), content_rect, border_radius=8)
+        pygame.draw.rect(surface, (242, 215, 205), content_rect, 2, border_radius=8)
+
+        step_title, step_body = NEKO_TUTORIAL_STEPS[self.tutorial_step]
+        step_text = font_neko_tiny.render(
+            f"Bước {self.tutorial_step + 1}/{len(NEKO_TUTORIAL_STEPS)}",
+            True,
+            PASTEL_ACCENT_DARK,
+        )
+        surface.blit(step_text, (content_rect.x + 12, content_rect.y + 12))
+        title = font_neko_title.render(step_title, True, PASTEL_TEXT)
+        surface.blit(title, (content_rect.x + 12, content_rect.y + 34))
+
+        y = content_rect.y + 66
+        for line in wrap_text(step_body, font_neko_text, content_rect.width - 24):
+            text = font_neko_text.render(line, True, PASTEL_TEXT)
+            surface.blit(text, (content_rect.x + 12, y))
+            y += 22
+
+        hint = "Meo meo, bạn vẫn chơi bình thường sau khi thu nhỏ bảng này."
+        y = content_rect.bottom - 54
+        for line in wrap_text(hint, font_neko_tiny, content_rect.width - 24):
+            text = font_neko_tiny.render(line, True, (135, 110, 100))
+            surface.blit(text, (content_rect.x + 12, y))
+            y += 18
+
+        button_y = rect.bottom - 48
+        button_w = 66
+        gap = 6
+        labels = [
+            ("back", "Quay lại", "Quay lại bước hướng dẫn trước"),
+            ("skip", "Bỏ qua", "Bỏ qua hướng dẫn Neko AI"),
+            (
+                "finish" if self.tutorial_step == len(NEKO_TUTORIAL_STEPS) - 1 else "next",
+                "Hoàn tất" if self.tutorial_step == len(NEKO_TUTORIAL_STEPS) - 1 else "Tiếp theo",
+                "Hoàn tất hướng dẫn" if self.tutorial_step == len(NEKO_TUTORIAL_STEPS) - 1 else "Xem bước hướng dẫn tiếp theo",
+            ),
+        ]
+        start_x = rect.right - (button_w * 3 + gap * 2) - 14
+        self.tutorial_buttons = []
+        for index, (button_id, label, accessibility_label) in enumerate(labels):
+            button = NekoButton(
+                button_id,
+                label,
+                pygame.Rect(start_x + index * (button_w + gap), button_y, button_w, 30),
+                accessibility_label,
+            )
+            enabled = button_id != "back" or self.tutorial_step > 0
+            button.draw(surface, pygame.mouse.get_pos(), enabled=enabled)
+            self.tutorial_buttons.append((button, enabled))
+
+    def build_message_items(self, area_width):
+        items = []
+        for message in self.messages[-8:]:
+            role = "Bạn" if message["role"] == "user" else "Neko"
+            lines = wrap_text(f"{role}: {message['content']}", font_neko_tiny, area_width - 18)
+            height = 12 + len(lines) * 17
+            items.append((message["role"], lines, height))
+        return items
+
+    def draw_chat_messages(self, surface, area):
+        pygame.draw.rect(surface, (255, 255, 255), area, border_radius=8)
+        pygame.draw.rect(surface, (242, 215, 205), area, 2, border_radius=8)
+        items = self.build_message_items(area.width)
+        visible_items = []
+        total_height = 0
+        for item in reversed(items):
+            next_height = total_height + item[2] + 6
+            if visible_items and next_height > area.height - 10:
+                break
+            visible_items.append(item)
+            total_height = next_height
+        visible_items.reverse()
+
+        y = area.bottom - total_height - 4
+        for role, lines, height in visible_items:
+            bubble_rect = pygame.Rect(area.x + 6, y, area.width - 12, height)
+            fill = (245, 252, 255) if role == "user" else (255, 246, 250)
+            pygame.draw.rect(surface, fill, bubble_rect, border_radius=8)
+            text_y = bubble_rect.y + 6
+            for line in lines:
+                text = font_neko_tiny.render(line, True, PASTEL_TEXT)
+                surface.blit(text, (bubble_rect.x + 8, text_y))
+                text_y += 17
+            y += height + 6
+
+    def draw_quick_questions(self, surface, top_y):
+        rect = self.panel_rect
+        self.quick_buttons = []
+        button_w = rect.width - 28
+        button_h = 21
+        gap = 4
+        for index, question in enumerate(NEKO_QUICK_QUESTIONS):
+            button_rect = pygame.Rect(
+                rect.x + 14,
+                top_y + index * (button_h + gap),
+                button_w,
+                button_h,
+            )
+            button = NekoButton(
+                f"quick_{index}",
+                question,
+                button_rect,
+                f"Câu hỏi nhanh: {question}",
+            )
+            button.draw(surface, pygame.mouse.get_pos(), enabled=not self.is_loading)
+            self.quick_buttons.append((button, question))
+
+    def draw_chat(self, surface):
+        rect = self.panel_rect
+        message_area = pygame.Rect(rect.x + 14, rect.y + 54, rect.width - 28, rect.height - 232)
+        self.draw_chat_messages(surface, message_area)
+
+        status_y = message_area.bottom + 8
+        if self.is_loading:
+            status = font_neko_tiny.render("Neko đang nghĩ...", True, PASTEL_ACCENT_DARK)
+            surface.blit(status, (rect.x + 16, status_y))
+        elif self.error_message:
+            for line in wrap_text(self.error_message, font_neko_tiny, rect.width - 32)[:2]:
+                status = font_neko_tiny.render(line, True, (180, 85, 85))
+                surface.blit(status, (rect.x + 16, status_y))
+                status_y += 16
+
+        quick_top = rect.bottom - 162
+        self.draw_quick_questions(surface, quick_top)
+
+        self.input_rect = pygame.Rect(rect.x + 14, rect.bottom - 40, rect.width - 86, 30)
+        input_fill = (255, 255, 255) if self.input_active else (255, 247, 242)
+        input_border = PASTEL_ACCENT_DARK if self.input_active else (230, 200, 190)
+        pygame.draw.rect(surface, input_fill, self.input_rect, border_radius=8)
+        pygame.draw.rect(surface, input_border, self.input_rect, 2, border_radius=8)
+        shown = self.input_text
+        if self.input_active and pygame.time.get_ticks() % 1000 < 500:
+            shown += "|"
+        if not shown:
+            shown = "Hỏi Neko..."
+        input_text = render_fit(shown, (145, 120, 110), self.input_rect.width - 16, start_size=13, min_size=10)
+        surface.blit(input_text, (self.input_rect.x + 9, self.input_rect.y + 7))
+
+        self.send_button = NekoButton(
+            "send",
+            "Gửi",
+            pygame.Rect(rect.right - 62, rect.bottom - 40, 48, 30),
+            "Gửi câu hỏi cho Neko AI",
+        )
+        self.send_button.draw(
+            surface,
+            pygame.mouse.get_pos(),
+            enabled=bool(self.input_text.strip()) and not self.is_loading,
+        )
+
+    def draw(self, surface):
+        self.draw_cat_icon(surface)
+        self.draw_panel(surface)
+
+    def handle_event(self, event):
+        self.calculate_layout()
+        if event.type == pygame.MOUSEBUTTONDOWN and event.button == 1:
+            if self.cat_rect.collidepoint(event.pos):
+                self.visible = not self.visible
+                self.input_active = False
+                if self.visible and not self.tutorial_seen and not self.messages:
+                    self.start_tutorial()
+                return True
+
+            if not self.visible:
+                return False
+
+            if self.close_button and self.close_button.clicked(event):
+                self.visible = False
+                self.input_active = False
+                return True
+
+            if self.tutorial_active:
+                for button, enabled in self.tutorial_buttons:
+                    if button.clicked(event, enabled=enabled):
+                        self.handle_tutorial_action(button.button_id)
+                        return True
+                return self.panel_rect.collidepoint(event.pos)
+
+            self.input_active = self.input_rect.collidepoint(event.pos)
+            if self.send_button and self.send_button.clicked(
+                event,
+                enabled=bool(self.input_text.strip()) and not self.is_loading,
+            ):
+                self.send_question(self.input_text)
+                return True
+            for button, question in self.quick_buttons:
+                if button.clicked(event, enabled=not self.is_loading):
+                    if question == "Hướng dẫn cách chơi":
+                        self.start_tutorial()
+                    else:
+                        self.send_question(question)
+                    return True
+
+            return self.panel_rect.collidepoint(event.pos)
+
+        if self.visible and event.type == pygame.KEYDOWN:
+            if event.key == pygame.K_ESCAPE:
+                self.visible = False
+                self.input_active = False
+                return True
+            if not self.tutorial_active and self.input_active:
+                if event.key == pygame.K_RETURN:
+                    self.send_question(self.input_text)
+                elif event.key == pygame.K_BACKSPACE:
+                    self.input_text = self.input_text[:-1]
+                else:
+                    char = getattr(event, "unicode", "")
+                    if char and char.isprintable() and len(self.input_text) < NEKO_AI_MAX_QUESTION_LENGTH:
+                        self.input_text += char
+                return True
+        return False
+
+    def handle_tutorial_action(self, action):
+        if action == "back":
+            self.tutorial_step = max(0, self.tutorial_step - 1)
+        elif action == "next":
+            self.tutorial_step = min(len(NEKO_TUTORIAL_STEPS) - 1, self.tutorial_step + 1)
+        elif action in {"skip", "finish"}:
+            self.tutorial_active = False
+            self.mark_tutorial_seen()
+            self.add_message(
+                "assistant",
+                "Xong rồi nhé. Khi cần xem lại, bấm câu hỏi nhanh Hướng dẫn cách chơi.",
+            )
+
+    def start_tutorial(self):
+        self.visible = True
+        self.tutorial_active = True
+        self.tutorial_step = 0
+        self.error_message = ""
+
+    def update(self):
+        self.ensure_intro()
+        if self.request_future is None or not self.request_future.done():
+            return
+        try:
+            data = self.request_future.result()
+            reply = str(data.get("reply") or "").strip()
+            if not reply:
+                raise ValueError("empty AI reply")
+            self.add_message("assistant", reply)
+            self.error_message = ""
+        except Exception:
+            self.add_message("assistant", self.build_client_fallback(self.pending_question))
+            self.error_message = "Chưa kết nối được backend AI; Neko đang dùng gợi ý cơ bản."
+        finally:
+            self.request_future = None
+            self.pending_question = ""
+            self.is_loading = False
+
+    def send_question(self, question):
+        clean_question = question.strip()
+        if not clean_question:
+            self.error_message = "Bạn nhập câu hỏi cho Neko trước nhé."
+            return
+        if len(clean_question) > NEKO_AI_MAX_QUESTION_LENGTH:
+            self.error_message = "Câu hỏi hơi dài, hãy rút ngắn để Neko trả lời nhanh hơn."
+            return
+        if self.is_loading:
+            return
+
+        self.tutorial_active = False
+        self.add_message("user", clean_question)
+        self.input_text = ""
+        self.error_message = ""
+        self.is_loading = True
+        self.pending_question = clean_question
+        game_state = self.build_game_state(clean_question)
+        self.request_future = self.executor.submit(
+            self.post_ai_request,
+            clean_question,
+            game_state,
+        )
+
+    def include_game_state(self, question):
+        normalized_question = question.casefold()
+        keywords = ("bàn", "khối", "đặt", "điểm", "combo", "nước")
+        return any(keyword in normalized_question for keyword in keywords)
+
+    def build_game_state(self, question):
+        if not self.include_game_state(question):
+            return {"score": int(self.game.score)}
+        board = [
+            [1 if cell is not None else 0 for cell in row[:GRID_SIZE]]
+            for row in self.game.grid[:GRID_SIZE]
+        ]
+        blocks = [
+            [[1 if cell else 0 for cell in row] for row in block.shape]
+            for block in self.game.available_blocks[:3]
+        ]
+        return {
+            "score": int(self.game.score),
+            "board": board,
+            "current_blocks": blocks,
+            "combo": 0,
+        }
+
+    def post_ai_request(self, question, game_state):
+        payload = json.dumps(
+            {
+                "question": question,
+                "game_state": game_state,
+            },
+            ensure_ascii=False,
+        ).encode("utf-8")
+        headers = {"Content-Type": "application/json"}
+        if self.game.access_token:
+            headers["Authorization"] = f"Bearer {self.game.access_token}"
+        request = urllib.request.Request(
+            f"{self.game.api_base_url}/api/ai-guide/chat",
+            data=payload,
+            headers=headers,
+            method="POST",
+        )
+        with urllib.request.urlopen(request, timeout=14) as response:
+            return json.loads(response.read().decode("utf-8"))
+
+    def build_client_fallback(self, question):
+        normalized_question = (question or "").casefold()
+        if "hướng dẫn" in normalized_question or "cách chơi" in normalized_question:
+            return (
+                "Phản hồi hướng dẫn cơ bản: kéo khối vào ô trống, lấp đầy hàng/cột "
+                "để xóa và ghi điểm. Không còn chỗ đặt khối thì ván kết thúc."
+            )
+        if "đặt" in normalized_question or "phân tích" in normalized_question:
+            return (
+                "Phản hồi hướng dẫn cơ bản: đây chỉ là gợi ý, hãy ưu tiên đặt khối "
+                "lớn trước và giữ nhiều ô trống liền nhau ở giữa bàn."
+            )
+        return (
+            "Phản hồi hướng dẫn cơ bản: meo meo, hãy giữ bàn thoáng và chuẩn bị "
+            "xóa nhiều hàng/cột cùng lúc để được nhiều điểm hơn."
+        )
+
+
 class Game:
     def __init__(
         self,
@@ -429,6 +1028,7 @@ class Game:
         self.happy_popup = HappyCatPopup()
         self.load_sounds()
         self.reset_game()
+        self.neko_ai = NekoAIGuide(self)
 
     # --- CÁC HÀM XỬ LÝ LEADERBOARD ---
     def load_leaderboard(self):
@@ -636,6 +1236,8 @@ class Game:
 
     def request_exit(self):
         self.stop_match_audio()
+        if hasattr(self, "neko_ai"):
+            self.neko_ai.shutdown()
         if self.online_poll_executor:
             self.online_poll_executor.shutdown(wait=False, cancel_futures=True)
             self.online_poll_executor = None
@@ -691,6 +1293,9 @@ class Game:
                 continue
 
             # NẾU ĐANG TRONG TRẬN GAME (VÀ ĐÃ GAME OVER)
+            if self.state == STATE_PLAY and self.neko_ai.handle_event(event):
+                continue
+
             if self.state == STATE_PLAY and self.game_over:
                 if not self.online_mode and event.type == pygame.KEYDOWN:
                     if event.key == pygame.K_RETURN:
@@ -1177,6 +1782,7 @@ class Game:
             elif self.state == STATE_PLAY:
                 self.cat_surprise.update()
                 self.happy_popup.update()
+                self.neko_ai.update()
 
                 self.screen.fill(PASTEL_BG)
                 self.draw_grid()
@@ -1195,6 +1801,7 @@ class Game:
                     self.happy_popup.draw(self.screen)
                 if self.online_mode:
                     self.draw_online_overlay()
+                self.neko_ai.draw(self.screen)
 
             pygame.display.flip()
             self.clock.tick(FPS)
