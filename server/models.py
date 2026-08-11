@@ -63,6 +63,7 @@ class MatchPlayer(SQLModel, table=True):
     team: int
     score: int = Field(default=0)
     result: Optional[str] = Field(default=None, max_length=5)
+    no_moves: bool = Field(default=False)
 
 
 class PasswordResetCode(SQLModel, table=True):

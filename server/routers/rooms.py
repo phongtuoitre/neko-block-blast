@@ -1,6 +1,5 @@
 import secrets
 import string
-from datetime import timedelta
 
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlmodel import Session, select
@@ -8,7 +7,7 @@ from sqlmodel import Session, select
 from server.database import get_session
 from server.dependencies import get_current_user
 from server.models import Match, MatchPlayer, Room, RoomPlayer, User
-from server.routers.matches import build_match_response, utc_now
+from server.routers.matches import build_match_response, create_playing_match, utc_now
 from server.schemas import MatchRead, RoomCreate, RoomLeaveResponse, RoomPlayerRead, RoomRead
 
 
@@ -294,7 +293,9 @@ def start_room(
         )
 
     players = session.exec(
-        select(RoomPlayer).where(RoomPlayer.room_id == room.id)
+        select(RoomPlayer)
+        .where(RoomPlayer.room_id == room.id)
+        .order_by(RoomPlayer.team, RoomPlayer.id)
     ).all()
     if len(players) != 2:
         raise HTTPException(
@@ -320,26 +321,7 @@ def start_room(
     if existing_match:
         return build_match_response(session, existing_match)
 
-    started_at = utc_now()
-    match = Match(
-        room_id=room.id,
-        mode=room.mode,
-        status="playing",
-        started_at=started_at,
-        ends_at=started_at + timedelta(seconds=120),
-    )
-    session.add(match)
-    session.flush()
-    for player in players:
-        session.add(
-            MatchPlayer(
-                match_id=match.id,
-                user_id=player.user_id,
-                team=player.team,
-            )
-        )
-    room.status = "playing"
-    session.add(room)
+    match = create_playing_match(session, room, players)
     session.commit()
     session.refresh(match)
     return build_match_response(session, match)

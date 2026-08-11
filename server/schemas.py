@@ -120,6 +120,7 @@ class RoomLeaveResponse(BaseModel):
 
 class MatchScoreUpdate(BaseModel):
     score: int = Field(ge=0)
+    no_moves: bool | None = None
 
 
 class MatchPlayerRead(BaseModel):
@@ -129,6 +130,8 @@ class MatchPlayerRead(BaseModel):
     team: int
     score: int
     result: str | None
+    no_moves: bool = False
+    wants_rematch: bool = False
 
 
 class MatchRead(BaseModel):
@@ -140,6 +143,7 @@ class MatchRead(BaseModel):
     winner_user_id: int | None
     winner_team: int | None
     players: list[MatchPlayerRead]
+    next_match_id: int | None = None
     event_blob_uploaded: bool | None = None
     event_blob_path: str | None = None
 

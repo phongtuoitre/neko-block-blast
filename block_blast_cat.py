@@ -6,6 +6,7 @@ import os
 import argparse
 import math
 import urllib.error
+import urllib.parse
 import urllib.request
 from concurrent.futures import ThreadPoolExecutor
 
@@ -1007,6 +1008,13 @@ class Game:
         self.online_opponent_score = 0
         self.online_result = None
         self.online_finished = False
+        self.online_no_moves = False
+        self.online_opponent_no_moves = False
+        self.online_opponent_wants_rematch = False
+        self.online_status_message = ""
+        self.online_rematch_requested = False
+        self.online_waiting_rematch = False
+        self.online_room_left = False
         self.online_connection_lost = False
         self.online_reconnecting = False
         self.online_connection_error = "Mất kết nối server"
@@ -1015,10 +1023,24 @@ class Game:
         self.online_poll_interval = 2500
         self.last_online_poll = -self.online_poll_interval
         self.online_poll_executor = (
-            ThreadPoolExecutor(max_workers=1) if self.online_mode else None
+            ThreadPoolExecutor(max_workers=2) if self.online_mode else None
         )
         self.online_poll_future = None
+        self.online_action_future = None
+        self.online_action_name = None
         self.last_submitted_score = None
+        self.last_submitted_no_moves = None
+        self.online_sync_due = self.online_mode
+        self.online_replay_button = NekoButton(
+            "online_replay",
+            "CHƠI LẠI",
+            pygame.Rect(WIDTH // 2 - 205, 405, 180, 46),
+        )
+        self.online_exit_button = NekoButton(
+            "online_exit",
+            "THOÁT PHÒNG",
+            pygame.Rect(WIDTH // 2 + 25, 405, 205, 46),
+        )
         if self.online_mode:
             self.skip_login = True
             self.state = STATE_PLAY
@@ -1138,6 +1160,11 @@ class Game:
         self.dragging_block = None
         self.game_over = False
         self.particles = []
+        if self.online_mode:
+            self.online_no_moves = False
+            self.online_opponent_no_moves = False
+            self.online_opponent_wants_rematch = False
+            self.online_sync_due = True
         self.spawn_blocks()
 
         if hasattr(self, 'cat_surprise'):
@@ -1162,6 +1189,30 @@ class Game:
             for c in range(block.cols):
                 if block.shape[r][c] == 1 and self.grid[grid_r + r][grid_c + c] is not None: return False
         return True
+
+    def has_any_valid_move(self):
+        if not self.available_blocks:
+            return False
+        for block in self.available_blocks:
+            for r in range(GRID_SIZE):
+                for c in range(GRID_SIZE):
+                    if self.can_place(block, r, c):
+                        return True
+        return False
+
+    def queue_online_sync(self):
+        if not self.online_mode or self.online_connection_lost:
+            return
+        self.online_sync_due = True
+        self.last_online_poll = -self.online_poll_interval
+
+    def set_online_no_moves(self, no_moves, force=False):
+        if not self.online_mode:
+            return
+        no_moves = bool(no_moves)
+        if force or self.online_no_moves != no_moves:
+            self.online_no_moves = no_moves
+            self.queue_online_sync()
 
     def place_block(self, block, grid_r, grid_c):
         cells_count = 0
@@ -1192,6 +1243,8 @@ class Game:
             if self.snd_jumpscare: self.snd_jumpscare.play()
 
         self.check_game_over()
+        if self.online_mode:
+            self.queue_online_sync()
 
     def check_lines(self):
         rows_to_clear = [r for r in range(GRID_SIZE) if all(self.grid[r][c] is not None for c in range(GRID_SIZE))]
@@ -1219,14 +1272,15 @@ class Game:
 
     def check_game_over(self):
         if not self.available_blocks: return
-        for block in self.available_blocks:
-            for r in range(GRID_SIZE):
-                for c in range(GRID_SIZE):
-                    if self.can_place(block, r, c): return
+        if self.has_any_valid_move():
+            if self.online_mode:
+                self.set_online_no_moves(False)
+            return
 
         self.game_over = True
         self.stop_match_audio()
         if self.online_mode:
+            self.set_online_no_moves(True, force=True)
             return
         self.save_leaderboard()  # CHẾT LÀ LƯU ĐIỂM NGAY!
 
@@ -1234,8 +1288,38 @@ class Game:
             self.cat_surprise.trigger()
             if self.snd_gameover: self.snd_gameover.play()
 
+    def get_online_room_code(self):
+        room_code = (self.online_match_state or {}).get("room_code")
+        if room_code:
+            return str(room_code).strip().upper()
+        if not self.online_mode or not self.match_id:
+            return ""
+        match_state = self.online_request(f"/matches/{self.match_id}")
+        self.online_match_state = match_state
+        return str(match_state.get("room_code", "")).strip().upper()
+
+    def leave_online_room_sync(self):
+        if not self.online_mode or self.online_room_left:
+            return
+        try:
+            room_code = self.get_online_room_code()
+            if not room_code:
+                return
+            encoded_room_code = urllib.parse.quote(room_code)
+            self.online_request(
+                f"/rooms/{encoded_room_code}/leave",
+                method="POST",
+            )
+            self.online_room_left = True
+        except Exception:
+            pass
+
     def request_exit(self):
         self.stop_match_audio()
+        if getattr(self, "online_mode", False) and not getattr(
+            self, "online_room_left", False
+        ):
+            self.leave_online_room_sync()
         if getattr(self, "neko_ai", None):
             self.neko_ai.shutdown()
         if self.online_poll_executor:
@@ -1298,6 +1382,26 @@ class Game:
                 and self.neko_ai
                 and self.neko_ai.handle_event(event)
             ):
+                continue
+
+            if (
+                self.state == STATE_PLAY
+                and self.online_mode
+                and (self.online_finished or self.online_connection_lost)
+            ):
+                if event.type == pygame.MOUSEBUTTONDOWN and event.button == 1:
+                    action_busy = self.online_action_future is not None
+                    if (
+                        not self.online_connection_lost
+                        and self.online_replay_button.clicked(
+                            event,
+                            enabled=not action_busy
+                            and not self.online_waiting_rematch,
+                        )
+                    ):
+                        self.request_online_rematch()
+                    elif self.online_exit_button.clicked(event, enabled=not action_busy):
+                        self.request_online_leave()
                 continue
 
             if self.state == STATE_PLAY and self.game_over:
@@ -1520,6 +1624,11 @@ class Game:
                 "Đang kết nối lại server...", True, PASTEL_ACCENT_DARK
             )
             self.screen.blit(reconnect_text, (GRID_OFFSET_X, 67))
+        if self.online_mode and self.game_over and not self.online_finished:
+            no_move_text = font_online_value.render(
+                "Đã hết nước đi, đang chờ đối thủ...", True, PASTEL_ACCENT_DARK
+            )
+            self.screen.blit(no_move_text, (GRID_OFFSET_X, 67))
 
     def draw_game_over(self):
         overlay = pygame.Surface((WIDTH, HEIGHT), pygame.SRCALPHA)
@@ -1585,7 +1694,104 @@ class Game:
         with urllib.request.urlopen(request, timeout=10) as response:
             return json.loads(response.read().decode("utf-8"))
 
+    def request_online_rematch(self):
+        if (
+            not self.online_mode
+            or not self.online_finished
+            or self.online_connection_lost
+            or self.online_action_future is not None
+            or self.online_waiting_rematch
+        ):
+            return
+        self.online_rematch_requested = True
+        self.online_waiting_rematch = True
+        self.online_status_message = "Đang chờ đối thủ chọn chơi lại..."
+        self.online_action_name = "rematch"
+        self.online_action_future = self.online_poll_executor.submit(
+            self.online_request,
+            f"/matches/{self.match_id}/rematch",
+            method="POST",
+        )
+        self.queue_online_sync()
+
+    def request_online_leave(self):
+        if not self.online_mode or self.online_action_future is not None:
+            return
+        self.online_status_message = "Đang thoát phòng..."
+        self.online_action_name = "leave"
+        self.online_action_future = self.online_poll_executor.submit(
+            self.leave_online_room_sync
+        )
+
+    def update_online_action(self):
+        online_action_future = getattr(self, "online_action_future", None)
+        if online_action_future is None or not online_action_future.done():
+            return
+        action_name = getattr(self, "online_action_name", None)
+        try:
+            result = online_action_future.result()
+        except Exception as error:
+            if action_name == "rematch":
+                self.online_rematch_requested = False
+                self.online_waiting_rematch = False
+                if isinstance(error, urllib.error.HTTPError) and error.code == 409:
+                    self.online_status_message = (
+                        "Không thể chơi lại. Đối thủ có thể đã rời phòng."
+                    )
+                else:
+                    self.online_status_message = "Không thể chơi lại lúc này."
+            elif action_name == "leave":
+                self.online_room_left = True
+                self.request_exit()
+        else:
+            if action_name == "rematch" and isinstance(result, dict):
+                self.update_online_state(result)
+                if result.get("status") == "playing":
+                    self.online_status_message = ""
+                else:
+                    self.online_status_message = (
+                        "Đang chờ đối thủ chọn chơi lại..."
+                    )
+            elif action_name == "leave":
+                self.online_room_left = True
+                self.request_exit()
+        finally:
+            self.online_action_future = None
+            self.online_action_name = None
+
+    def begin_online_match(self, match_state):
+        self.match_id = match_state.get("match_id", self.match_id)
+        self.online_match_state = None
+        self.online_remaining_seconds = match_state.get("remaining_seconds", 0)
+        self.online_server_score = 0
+        self.online_opponent_score = 0
+        self.online_result = None
+        self.online_finished = False
+        self.online_connection_lost = False
+        self.online_reconnecting = False
+        self.online_status_message = ""
+        self.online_rematch_requested = False
+        self.online_waiting_rematch = False
+        self.connection_fail_count = 0
+        self.last_submitted_score = None
+        self.last_submitted_no_moves = None
+        self.last_online_poll = -self.online_poll_interval
+        self.online_sync_due = True
+        self.is_jumpscare = False
+        self.jumpscare_done = False
+        self.reset_game()
+        self.update_online_state(match_state)
+
     def update_online_state(self, match_state):
+        incoming_match_id = match_state.get("match_id")
+        if (
+            incoming_match_id
+            and incoming_match_id != self.match_id
+            and match_state.get("status") == "playing"
+        ):
+            self.begin_online_match(match_state)
+            return
+
         self.online_match_state = match_state
         self.online_remaining_seconds = match_state.get("remaining_seconds", 0)
         players = match_state.get("players", [])
@@ -1608,8 +1814,22 @@ class Game:
         )
         if opponent:
             self.online_opponent_score = opponent.get("score", 0)
+            self.online_opponent_no_moves = bool(opponent.get("no_moves", False))
+            self.online_opponent_wants_rematch = bool(
+                opponent.get("wants_rematch", False)
+            )
         if my_player:
             self.online_server_score = my_player.get("score", 0)
+            if my_player.get("no_moves"):
+                self.online_no_moves = True
+                if not self.game_over:
+                    self.game_over = True
+                    self.stop_match_audio()
+            self.online_rematch_requested = bool(
+                my_player.get("wants_rematch", self.online_rematch_requested)
+            )
+            if self.online_rematch_requested and self.online_finished:
+                self.online_waiting_rematch = True
         if match_state.get("status") in {"finished", "cancelled", "abandoned"}:
             self.online_finished = True
             self.online_result = (
@@ -1622,24 +1842,35 @@ class Game:
                 self.dragging_block.reset_pos()
                 self.dragging_block.is_dragging = False
                 self.dragging_block = None
+        elif match_state.get("status") == "playing":
+            self.online_finished = False
+            self.online_result = None
+            if self.state == STATE_PLAY:
+                self.check_game_over()
 
-    def fetch_online_update(self, score, should_submit_score):
-        if should_submit_score:
+    def fetch_online_update(self, match_id, score, no_moves, should_submit_state):
+        submitted_state = None
+        if should_submit_state:
             try:
                 self.online_request(
-                    f"/matches/{self.match_id}/score",
+                    f"/matches/{match_id}/score",
                     method="POST",
-                    payload={"score": score},
+                    payload={"score": score, "no_moves": no_moves},
                 )
             except urllib.error.HTTPError as error:
                 if error.code != 409:
                     raise
-        match_state = self.online_request(f"/matches/{self.match_id}")
+            else:
+                submitted_state = (score, no_moves)
+        match_state = self.online_request(f"/matches/{match_id}")
+        next_match_id = match_state.get("next_match_id")
+        if next_match_id and next_match_id != match_id:
+            match_state = self.online_request(f"/matches/{next_match_id}")
         user_id = self.online_user_id
         if user_id is None:
             me = self.online_request("/auth/me")
             user_id = me.get("id")
-        return match_state, user_id, score if should_submit_score else None
+        return match_state, user_id, submitted_state
 
     def handle_online_poll_error(self, error):
         if isinstance(error, urllib.error.HTTPError):
@@ -1658,14 +1889,14 @@ class Game:
         self.register_online_connection_failure()
 
     def poll_online_match(self):
-        if not self.online_mode or self.online_finished or self.online_connection_lost:
+        if not self.online_mode or self.online_connection_lost:
             return
 
         if self.online_poll_future is not None:
             if not self.online_poll_future.done():
                 return
             try:
-                match_state, user_id, submitted_score = (
+                match_state, user_id, submitted_state = (
                     self.online_poll_future.result()
                 )
             except (
@@ -1679,8 +1910,9 @@ class Game:
                 self.handle_online_poll_error(error)
             else:
                 self.online_user_id = user_id
-                if submitted_score is not None:
-                    self.last_submitted_score = submitted_score
+                if submitted_state is not None:
+                    self.last_submitted_score = submitted_state[0]
+                    self.last_submitted_no_moves = submitted_state[1]
                 self.online_connection_lost = False
                 self.online_reconnecting = False
                 self.connection_fail_count = 0
@@ -1690,14 +1922,26 @@ class Game:
             return
 
         now = pygame.time.get_ticks()
-        if now - self.last_online_poll < self.online_poll_interval:
+        if (
+            not self.online_sync_due
+            and now - self.last_online_poll < self.online_poll_interval
+        ):
             return
         self.last_online_poll = now
-        should_submit_score = self.score != self.last_submitted_score
+        self.online_sync_due = False
+        should_submit_state = (
+            not self.online_finished
+            and (
+                self.score != self.last_submitted_score
+                or self.online_no_moves != self.last_submitted_no_moves
+            )
+        )
         self.online_poll_future = self.online_poll_executor.submit(
             self.fetch_online_update,
+            self.match_id,
             self.score,
-            should_submit_score,
+            self.online_no_moves,
+            should_submit_state,
         )
 
     def register_online_connection_failure(self):
@@ -1722,7 +1966,8 @@ class Game:
 
         if self.online_connection_lost:
             title_text = self.online_connection_error
-            detail_text = "Nhấn ESC để thoát"
+            detail_text = "Không thể đồng bộ với server"
+            status_text = "Bạn vẫn có thể thoát khỏi cửa sổ trận."
         else:
             result_labels = {
                 "win": "Thắng",
@@ -1735,17 +1980,46 @@ class Game:
                 f"Điểm của bạn: {self.online_server_score}    "
                 f"Điểm đối thủ: {self.online_opponent_score}"
             )
+            status_text = self.online_status_message
+            if not status_text and self.online_opponent_wants_rematch:
+                status_text = "Đối thủ đã chọn chơi lại."
+
         title = font_online_overlay_title.render(title_text, True, (255, 255, 255))
         detail = font_online_overlay_text.render(detail_text, True, (255, 255, 255))
-        self.screen.blit(title, title.get_rect(center=(WIDTH // 2, 280)))
-        self.screen.blit(detail, detail.get_rect(center=(WIDTH // 2, 335)))
-        if not self.online_connection_lost:
-            exit_hint = font_online_overlay_text.render(
-                "Nhấn ESC để thoát", True, (220, 220, 220)
+        self.screen.blit(title, title.get_rect(center=(WIDTH // 2, 255)))
+        self.screen.blit(detail, detail.get_rect(center=(WIDTH // 2, 310)))
+        if status_text:
+            status_surface = font_online_overlay_text.render(
+                status_text, True, (235, 225, 220)
             )
             self.screen.blit(
-                exit_hint, exit_hint.get_rect(center=(WIDTH // 2, 380))
+                status_surface, status_surface.get_rect(center=(WIDTH // 2, 360))
             )
+
+        action_busy = self.online_action_future is not None
+        if self.online_connection_lost:
+            self.online_exit_button.rect.update(WIDTH // 2 - 102, 405, 205, 46)
+            self.online_exit_button.label = "THOÁT"
+            self.online_exit_button.draw(self.screen, pygame.mouse.get_pos())
+            return
+
+        self.online_replay_button.rect.update(WIDTH // 2 - 205, 405, 180, 46)
+        self.online_exit_button.rect.update(WIDTH // 2 + 25, 405, 205, 46)
+        self.online_replay_button.label = (
+            "ĐANG CHỜ" if self.online_waiting_rematch else "CHƠI LẠI"
+        )
+        self.online_exit_button.label = "THOÁT PHÒNG"
+        self.online_replay_button.draw(
+            self.screen,
+            pygame.mouse.get_pos(),
+            enabled=not action_busy and not self.online_waiting_rematch,
+        )
+        self.online_exit_button.draw(
+            self.screen,
+            pygame.mouse.get_pos(),
+            enabled=not action_busy,
+        )
+        return
 
     # --- VÒNG LẶP CHÍNH ---
     def run(self):
@@ -1756,6 +2030,7 @@ class Game:
 
     def _run_loop(self):
         while self.running:
+            self.update_online_action()
             self.poll_online_match()
             # ================= BẪY JUMPSCARE CHẶN ĐỨNG TRÒ CHƠI =================
             if hasattr(self, 'is_jumpscare') and self.is_jumpscare:

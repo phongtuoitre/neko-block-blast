@@ -1498,6 +1498,7 @@ class Launcher:
         match_id = match.get("match_id")
         if self.launching_match or match_id == self.current_match_started:
             return
+        room_code = (self.current_room or {}).get("room_code") or match.get("room_code")
         self.launching_match = True
         self.current_match_started = match_id
         env = os.environ.copy()
@@ -1532,10 +1533,12 @@ class Launcher:
         finally:
             self.launching_match = False
             pygame.display.set_caption("Neko Block Blast - Menu")
+        if not room_code:
+            self.current_room = None
+            self.state = STATE_ONLINE_LOBBY
+            return
         try:
-            self.current_room = get_room(
-                self.access_token, self.current_room["room_code"]
-            )
+            room = get_room(self.access_token, room_code)
         except ApiError as exc:
             if self.handle_expired_session(exc):
                 return
@@ -1544,6 +1547,16 @@ class Launcher:
                 return
             self.current_room = None
             self.state = STATE_ONLINE_LOBBY
+            return
+        current_user_id = (self.online_user or {}).get("id")
+        if current_user_id and not any(
+            player.get("user_id") == current_user_id
+            for player in room.get("players", [])
+        ):
+            self.clear_room_state_after_leave()
+            return
+        self.current_room = room
+        self.state = STATE_ROOM_WAITING
 
     def toggle_room_ready(self):
         if not self.current_room:

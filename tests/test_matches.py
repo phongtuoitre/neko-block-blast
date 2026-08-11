@@ -227,6 +227,110 @@ def test_get_match_finalizes_expired_match():
     assert results["finalize_guest"] == "lose"
 
 
+def test_match_finishes_immediately_when_both_players_have_no_moves():
+    code, host_token, guest_token = prepare_1v1("nomove_fin")
+    match_data = client.post(
+        f"/rooms/{code}/start", headers=auth(host_token)
+    ).json()
+    match_id = match_data["match_id"]
+
+    first_response = client.post(
+        f"/matches/{match_id}/score",
+        json={"score": 900, "no_moves": True},
+        headers=auth(host_token),
+    )
+    assert first_response.status_code == 200
+    first_data = first_response.json()
+    assert first_data["status"] == "playing"
+    assert next(
+        player for player in first_data["players"] if player["username"] == "nomove_fin_host"
+    )["no_moves"] is True
+
+    second_response = client.post(
+        f"/matches/{match_id}/score",
+        json={"score": 300, "no_moves": True},
+        headers=auth(guest_token),
+    )
+    assert second_response.status_code == 200
+    data = second_response.json()
+    assert data["status"] == "finished"
+    assert data["remaining_seconds"] == 0
+    results = {player["username"]: player["result"] for player in data["players"]}
+    assert results["nomove_fin_host"] == "win"
+    assert results["nomove_fin_guest"] == "lose"
+
+    room = client.get(f"/rooms/{code}", headers=auth(host_token)).json()
+    assert room["status"] == "waiting"
+
+
+def test_one_player_without_moves_does_not_finish_match_early():
+    code, host_token, _ = prepare_1v1("one_no_moves")
+    match_data = client.post(
+        f"/rooms/{code}/start", headers=auth(host_token)
+    ).json()
+    match_id = match_data["match_id"]
+
+    response = client.post(
+        f"/matches/{match_id}/score",
+        json={"score": 400, "no_moves": True},
+        headers=auth(host_token),
+    )
+
+    assert response.status_code == 200
+    data = response.json()
+    assert data["status"] == "playing"
+    assert data["remaining_seconds"] > 0
+
+
+def test_rematch_waits_for_both_players_and_reuses_room():
+    code, host_token, guest_token = prepare_1v1("rematch_ok")
+    match_data = client.post(
+        f"/rooms/{code}/start", headers=auth(host_token)
+    ).json()
+    old_match_id = match_data["match_id"]
+    client.post(
+        f"/matches/{old_match_id}/score",
+        json={"score": 700, "no_moves": True},
+        headers=auth(host_token),
+    )
+    client.post(
+        f"/matches/{old_match_id}/score",
+        json={"score": 700, "no_moves": True},
+        headers=auth(guest_token),
+    )
+
+    first_rematch = client.post(
+        f"/matches/{old_match_id}/rematch", headers=auth(host_token)
+    )
+    assert first_rematch.status_code == 200
+    first_data = first_rematch.json()
+    assert first_data["status"] == "finished"
+    rematch_flags = {
+        player["username"]: player["wants_rematch"]
+        for player in first_data["players"]
+    }
+    assert rematch_flags["rematch_ok_host"] is True
+    assert rematch_flags["rematch_ok_guest"] is False
+
+    second_rematch = client.post(
+        f"/matches/{old_match_id}/rematch", headers=auth(guest_token)
+    )
+    assert second_rematch.status_code == 200
+    new_match = second_rematch.json()
+    assert new_match["status"] == "playing"
+    assert new_match["match_id"] != old_match_id
+    assert all(player["score"] == 0 for player in new_match["players"])
+    assert all(player["no_moves"] is False for player in new_match["players"])
+
+    old_match = client.get(f"/matches/{old_match_id}", headers=auth(host_token))
+    assert old_match.status_code == 200
+    assert old_match.json()["next_match_id"] == new_match["match_id"]
+
+    active_match = client.get(f"/rooms/{code}/active-match", headers=auth(host_token))
+    assert active_match.status_code == 200
+    assert active_match.json()["match_id"] == new_match["match_id"]
+
+
 def test_finished_match_uploads_match_result_json(monkeypatch):
     storage = FakeBlobStorage()
     configure_fake_blob_storage(monkeypatch, storage)
