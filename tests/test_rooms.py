@@ -13,7 +13,7 @@ from sqlmodel import Session, select
 
 from server.database import engine, init_db
 from server.main import app
-from server.models import Match, Room, RoomPlayer
+from server.models import Match, MatchPlayer, Room, RoomPlayer
 
 
 client = TestClient(app)
@@ -235,3 +235,86 @@ def test_leave_room_with_active_match_cancels_match_and_remaining_player_can_lea
     guest_leave = client.post(f"/rooms/{room_code}/leave", headers=auth(guest_token))
     assert guest_leave.status_code == 200
     assert client.get(f"/rooms/{room_code}", headers=auth(guest_token)).status_code == 404
+
+
+def test_players_can_leave_after_rematch_without_orphan_room_player():
+    room_code, _, host_token, guest_token = create_room_with_guest("leave_rematch")
+    ready = client.post(f"/rooms/{room_code}/ready", headers=auth(guest_token))
+    assert ready.status_code == 200
+    old_match = client.post(f"/rooms/{room_code}/start", headers=auth(host_token)).json()
+    old_match_id = old_match["match_id"]
+
+    host_score = client.post(
+        f"/matches/{old_match_id}/score",
+        json={"score": 500, "no_moves": True},
+        headers=auth(host_token),
+    )
+    assert host_score.status_code == 200
+    guest_score = client.post(
+        f"/matches/{old_match_id}/score",
+        json={"score": 200, "no_moves": True},
+        headers=auth(guest_token),
+    )
+    assert guest_score.status_code == 200
+    assert guest_score.json()["status"] == "finished"
+
+    first_rematch = client.post(
+        f"/matches/{old_match_id}/rematch", headers=auth(host_token)
+    )
+    assert first_rematch.status_code == 200
+    second_rematch = client.post(
+        f"/matches/{old_match_id}/rematch", headers=auth(guest_token)
+    )
+    assert second_rematch.status_code == 200
+    new_match_id = second_rematch.json()["match_id"]
+    assert new_match_id != old_match_id
+
+    host_leave = client.post(f"/rooms/{room_code}/leave", headers=auth(host_token))
+    assert host_leave.status_code == 200
+    active_match = client.get(
+        f"/rooms/{room_code}/active-match", headers=auth(guest_token)
+    )
+    assert active_match.status_code == 404
+    refreshed = client.get(f"/rooms/{room_code}", headers=auth(guest_token))
+    assert refreshed.status_code == 200
+    refreshed_data = refreshed.json()
+    assert refreshed_data["status"] == "waiting"
+    assert len(refreshed_data["players"]) == 1
+    assert refreshed_data["players"][0]["username"] == "leave_rematch_guest"
+
+    guest_leave = client.post(f"/rooms/{room_code}/leave", headers=auth(guest_token))
+    assert guest_leave.status_code == 200
+    repeated_guest_leave = client.post(
+        f"/rooms/{room_code}/leave", headers=auth(guest_token)
+    )
+    assert repeated_guest_leave.status_code == 200
+
+    closed_room = client.get(f"/rooms/{room_code}", headers=auth(guest_token))
+    assert closed_room.status_code == 200
+    closed_data = closed_room.json()
+    assert closed_data["status"] == "finished"
+    assert closed_data["players"] == []
+
+    with Session(engine) as session:
+        room = session.exec(select(Room).where(Room.room_code == room_code)).first()
+        assert room is not None
+        room_players = session.exec(
+            select(RoomPlayer).where(RoomPlayer.room_id == room.id)
+        ).all()
+        assert room_players == []
+
+        finished_match = session.get(Match, old_match_id)
+        assert finished_match.status == "finished"
+        finished_players = session.exec(
+            select(MatchPlayer).where(MatchPlayer.match_id == old_match_id)
+        ).all()
+        assert sorted(player.score for player in finished_players) == [200, 500]
+        assert {player.result for player in finished_players} == {"win", "lose"}
+
+        cancelled_match = session.get(Match, new_match_id)
+        assert cancelled_match.status == "cancelled"
+        cancelled_players = session.exec(
+            select(MatchPlayer).where(MatchPlayer.match_id == new_match_id)
+        ).all()
+        assert len(cancelled_players) == 2
+        assert {player.result for player in cancelled_players} == {"draw"}

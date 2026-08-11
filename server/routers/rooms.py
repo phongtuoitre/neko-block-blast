@@ -14,6 +14,7 @@ from server.schemas import MatchRead, RoomCreate, RoomLeaveResponse, RoomPlayerR
 router = APIRouter(prefix="/rooms", tags=["rooms"])
 
 ROOM_CODE_ALPHABET = string.ascii_uppercase + string.digits
+TRANSIENT_MATCH_STATUSES = {"cancelled", "abandoned"}
 
 
 def get_room_or_404(session: Session, room_code: str) -> Room:
@@ -107,18 +108,21 @@ def delete_transient_matches_for_empty_room(session: Session, room: Room) -> boo
     matches = session.exec(
         select(Match).where(Match.room_id == room.id).with_for_update()
     ).all()
-    can_delete_room = True
+    if any(match.status not in TRANSIENT_MATCH_STATUSES for match in matches):
+        return False
+
     for match in matches:
-        if match.status not in {"cancelled", "abandoned"}:
-            can_delete_room = False
-            continue
         match_players = session.exec(
             select(MatchPlayer).where(MatchPlayer.match_id == match.id)
         ).all()
         for match_player in match_players:
             session.delete(match_player)
+    session.flush()
+
+    for match in matches:
         session.delete(match)
-    return can_delete_room
+    session.flush()
+    return True
 
 
 @router.post("", response_model=RoomRead, status_code=status.HTTP_201_CREATED)
