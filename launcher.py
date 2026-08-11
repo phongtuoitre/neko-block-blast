@@ -16,6 +16,7 @@ from client_api import (
     API_BASE_URL,
     ApiError,
     create_room,
+    fetch_public_leaderboard,
     forgot_password,
     get_active_match,
     get_current_user,
@@ -750,6 +751,11 @@ class Launcher:
         self.room_poll_executor = ThreadPoolExecutor(max_workers=1)
         self.room_poll_future = None
         self.last_room_poll = 0
+        self.leaderboard_entries = []
+        self.leaderboard_future = None
+        self.leaderboard_loading = False
+        self.leaderboard_attempted = False
+        self.leaderboard_error = ""
         self.launching_match = False
         self.current_match_started = None
         self.leave_room_in_progress = False
@@ -1020,52 +1026,102 @@ class Launcher:
             fallback = "Đang chờ chủ phòng bắt đầu..."
         self.draw_online_status(620, fallback)
 
-    def load_leaderboard(self):
-        leaderboard_path = os.path.join(BASE_DIR, "leaderboard.json")
-        if not os.path.exists(leaderboard_path):
-            return []
-        try:
-            with open(leaderboard_path, "r", encoding="utf-8") as file:
-                data = json.load(file)
-        except (OSError, json.JSONDecodeError):
-            return []
-        if not isinstance(data, list):
-            return []
+    def refresh_leaderboard(self, force=False):
+        if self.leaderboard_future and not self.leaderboard_future.done():
+            return
+        if self.leaderboard_attempted and not force:
+            return
+        self.leaderboard_loading = True
+        self.leaderboard_attempted = True
+        self.leaderboard_error = ""
+        self.leaderboard_future = self.room_poll_executor.submit(fetch_public_leaderboard)
 
-        merged = {}
-        for item in data:
-            if isinstance(item, dict):
-                name = str(item.get("name", "")).strip()
-                score = item.get("score", 0)
-                if name:
-                    try:
-                        score = int(score)
-                    except (TypeError, ValueError):
-                        continue
-                    key = name.casefold()
-                    if key not in merged or score > merged[key]["score"]:
-                        merged[key] = {"name": name, "score": score}
-        return sorted(merged.values(), key=lambda entry: entry["score"], reverse=True)
+    def update_leaderboard_fetch(self):
+        if not self.leaderboard_future or not self.leaderboard_future.done():
+            return
+        future = self.leaderboard_future
+        self.leaderboard_future = None
+        self.leaderboard_loading = False
+        try:
+            self.leaderboard_entries = future.result()
+            self.leaderboard_error = ""
+        except ApiError as exc:
+            self.leaderboard_error = "Không tải được bảng xếp hạng"
+            LOGGER.warning(
+                "leaderboard_fetch_failed status_code=%s detail=%s response_body=%s exception_type=%s",
+                getattr(exc, "status_code", None),
+                safe_log_text(getattr(exc, "detail", "")),
+                safe_log_text(getattr(exc, "response_body", "")),
+                type(exc).__name__,
+            )
+        except Exception as exc:
+            self.leaderboard_error = "Không tải được bảng xếp hạng"
+            LOGGER.warning(
+                "leaderboard_fetch_failed detail=%s exception_type=%s",
+                safe_log_text(exc),
+                type(exc).__name__,
+            )
 
     def draw_leaderboard(self):
+        self.refresh_leaderboard()
+        self.update_leaderboard_fetch()
         self.screen.fill(PASTEL_BG)
         title = FONT_VIETNAMESE_TITLE.render("BẢNG XẾP HẠNG", True, PASTEL_TEXT)
         self.screen.blit(title, title.get_rect(center=(WIDTH // 2, 80)))
         board_rect = pygame.Rect(WIDTH // 2 - 285, 135, 570, 380)
         pygame.draw.rect(self.screen, PASTEL_GRID_EMPTY, board_rect, border_radius=18)
-        entries = self.load_leaderboard()
-        if not entries:
-            empty = FONT_MEDIUM.render("Chưa có điểm nào", True, PASTEL_TEXT)
+        entries = self.leaderboard_entries
+        if not entries and self.leaderboard_loading:
+            empty = FONT_MEDIUM.render("Đang tải bảng xếp hạng...", True, PASTEL_TEXT)
             self.screen.blit(empty, empty.get_rect(center=board_rect.center))
+        elif not entries:
+            empty_text = self.leaderboard_error or "Chưa có điểm nào"
+            empty = FONT_MEDIUM.render(empty_text, True, PASTEL_TEXT)
+            self.screen.blit(empty, empty.get_rect(center=board_rect.center))
+            if self.leaderboard_error:
+                hint = FONT_VIETNAMESE_TINY.render(
+                    "Kiểm tra kết nối mạng rồi mở lại bảng xếp hạng",
+                    True,
+                    PASTEL_ACCENT_DARK,
+                )
+                self.screen.blit(
+                    hint,
+                    hint.get_rect(center=(board_rect.centerx, board_rect.centery + 40)),
+                )
         else:
+            headers = [
+                ("#", board_rect.x + 24),
+                ("Tên", board_rect.x + 70),
+                ("Trận", board_rect.x + 270),
+                ("Thắng", board_rect.x + 335),
+                ("Tổng", board_rect.x + 410),
+                ("Cao nhất", board_rect.x + 488),
+            ]
+            for label, x in headers:
+                header = FONT_VIETNAMESE_TINY.render(label, True, PASTEL_ACCENT_DARK)
+                self.screen.blit(header, (x, board_rect.y + 20))
             for index, entry in enumerate(entries[:8]):
-                y = 165 + index * 40
-                rank = FONT_SMALL.render(f"#{index + 1}", True, PASTEL_ACCENT_DARK)
-                name = FONT_SMALL.render(entry["name"][:18], True, PASTEL_TEXT)
-                score = FONT_SMALL.render(f'{entry["score"]} pt', True, PASTEL_TEXT)
-                self.screen.blit(rank, (board_rect.x + 35, y))
-                self.screen.blit(name, (board_rect.x + 125, y))
-                self.screen.blit(score, (board_rect.right - score.get_width() - 40, y))
+                y = 175 + index * 38
+                row = [
+                    (f"#{entry.get('rank', index + 1)}", board_rect.x + 24),
+                    (str(entry.get("name", ""))[:17], board_rect.x + 70),
+                    (str(entry.get("matches", 0)), board_rect.x + 270),
+                    (str(entry.get("wins", 0)), board_rect.x + 335),
+                    (str(entry.get("total_score", 0)), board_rect.x + 410),
+                    (str(entry.get("best_score", 0)), board_rect.x + 500),
+                ]
+                for text_value, x in row:
+                    color = PASTEL_ACCENT_DARK if x == board_rect.x + 24 else PASTEL_TEXT
+                    text = FONT_VIETNAMESE_TINY.render(text_value, True, color)
+                    self.screen.blit(text, (x, y))
+            if self.leaderboard_loading:
+                refresh = FONT_VIETNAMESE_TINY.render(
+                    "Đang cập nhật...", True, PASTEL_ACCENT_DARK
+                )
+                self.screen.blit(
+                    refresh,
+                    refresh.get_rect(center=(board_rect.centerx, board_rect.bottom - 22)),
+                )
         self.back_button.draw(self.screen, pygame.mouse.get_pos())
 
     def launch_single_player(self):
@@ -1615,6 +1671,7 @@ class Launcher:
             self.online_message = ""
         elif button_text == "BẢNG XẾP HẠNG":
             self.state = STATE_LEADERBOARD
+            self.refresh_leaderboard(force=True)
         elif button_text == "ĐĂNG XUẤT":
             self.logout()
         elif button_text == "THOÁT":

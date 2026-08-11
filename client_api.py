@@ -109,6 +109,44 @@ def reset_password(email, code, new_password):
     )
 
 
+def _safe_int(value, default=0):
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return default
+
+
+def normalize_public_leaderboard(payload):
+    if not isinstance(payload, dict):
+        return []
+    rows = payload.get("leaderboard")
+    if not isinstance(rows, list):
+        return []
+
+    entries = []
+    for index, row in enumerate(rows, start=1):
+        if not isinstance(row, dict):
+            continue
+        name = str(row.get("display_name") or row.get("username") or "").strip()
+        if not name:
+            continue
+        entries.append(
+            {
+                "rank": _safe_int(row.get("rank"), index),
+                "name": name,
+                "matches": max(0, _safe_int(row.get("matches"))),
+                "wins": max(0, _safe_int(row.get("wins"))),
+                "total_score": max(0, _safe_int(row.get("total_score"))),
+                "best_score": max(0, _safe_int(row.get("best_score"))),
+            }
+        )
+    return entries
+
+
+def fetch_public_leaderboard():
+    return normalize_public_leaderboard(_request("/public/dashboard"))
+
+
 def _bearer_headers(access_token, include_json=False):
     headers = {"Authorization": f"Bearer {access_token}"}
     if include_json:
